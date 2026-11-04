@@ -2,13 +2,15 @@ services:
   db:
     container_name: db
     image: postgres:18.6-bookworm
+    # pg_stat_statements powers the Postgres MCP server's slow-query tools
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     ports:
       - 5000:5432
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
-      MCP_READER_PASSWORD: ${DBT_MCP_DB_PASSWORD:-}
+      MCP_READER_PASSWORD: ${MCP_READER_PASSWORD:-}
     volumes:
     - ./postgres/data:/var/lib/postgresql
     - ./postgres/airflow_init.sql:/docker-entrypoint-initdb.d/airflow_init.sql
@@ -108,9 +110,9 @@ services:
       DB_HOST: ${DB_HOST:-db}
       DB_PORT: ${DB_PORT:-5432}
       # Read-only role by default: query_database runs raw SQL. For
-      # DBT_MCP_MODE=full set these to the DB_USER/DB_PASSWORD values
+      # DBT_MCP_MODE=full set DBT_MCP_DB_USER/PASSWORD to the DB_USER/DB_PASSWORD values
       DB_USER: ${DBT_MCP_DB_USER:-mcp_reader}
-      DB_PASSWORD: ${DBT_MCP_DB_PASSWORD}
+      DB_PASSWORD: ${DBT_MCP_DB_PASSWORD:-${MCP_READER_PASSWORD}}
       DB_NAME: ${DB_NAME}
       # safe = inspect, lineage, query and test; full = also build/run/seed models
       DBT_MCP_MODE: ${DBT_MCP_MODE:-safe}
@@ -131,6 +133,31 @@ services:
       - 127.0.0.1:5010:5010
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 5010), 3)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - my_network
+
+  # MCP server for AI clients to explore and tune Postgres: http://localhost:5011/sse
+  postgres_mcp:
+    container_name: postgres_mcp
+    image: crystaldba/postgres-mcp:0.3.0
+    user: "1000:1000"
+    environment:
+      # Two layers: the mcp_reader role is SELECT-only with read-only sessions,
+      # and restricted mode rejects non-read-only SQL before it is sent
+      DATABASE_URI: postgresql://mcp_reader:${MCP_READER_PASSWORD}@db:5432/${DB_NAME}
+    command: ["--access-mode=restricted", "--transport=sse", "--sse-host=0.0.0.0", "--sse-port=8000"]
+    restart: unless-stopped
+    ports:
+      # Localhost only: no client auth
+      - 127.0.0.1:5011:8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), 3)"]
       interval: 30s
       timeout: 10s
       retries: 3

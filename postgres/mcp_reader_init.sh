@@ -1,5 +1,5 @@
 #!/bin/bash
-# Read-only Postgres role for AI/MCP access (dbt_mcp in safe mode).
+# Read-only Postgres role for AI/MCP access (dbt_mcp in safe mode, postgres_mcp).
 # Runs automatically on a fresh data dir (docker-entrypoint-initdb.d); for an
 # existing database run it once with:
 #   docker exec db bash /docker-entrypoint-initdb.d/mcp_reader_init.sh
@@ -24,5 +24,9 @@ GRANT SELECT ON ALL TABLES IN SCHEMA dev TO mcp_reader;
 -- dbt drops and recreates its tables on every run (as the owner role), so
 -- grant SELECT on future tables too
 ALTER DEFAULT PRIVILEGES FOR ROLE :"owner" IN SCHEMA dev GRANT SELECT ON TABLES TO mcp_reader;
+
+-- Query statistics for the Postgres MCP server (needs shared_preload_libraries)
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+GRANT pg_read_all_stats TO mcp_reader;
 SQL
 echo "mcp_reader role ready (read-only on schema dev)"

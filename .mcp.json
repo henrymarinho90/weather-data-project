@@ -11,6 +11,10 @@
     "dbt": {
       "type": "http",
       "url": "http://localhost:5010/mcp"
+    },
+    "postgres": {
+      "type": "sse",
+      "url": "http://localhost:5011/sse"
     }
   }
 }
