@@ -7,6 +7,10 @@
     "airflow": {
       "type": "http",
       "url": "http://localhost:5009/mcp/"
+    },
+    "dbt": {
+      "type": "http",
+      "url": "http://localhost:5010/mcp"
     }
   }
 }

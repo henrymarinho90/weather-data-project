@@ -12,6 +12,8 @@ DB_USER=$(env_val .env DB_USER)
 DB_PASSWORD=$(env_val .env DB_PASSWORD)
 DB_NAME=$(env_val .env DB_NAME)
 AIRFLOW_MCP_PASSWORD=$(env_val .env AIRFLOW_MCP_PASSWORD)
+DBT_MCP_DB_USER=$(env_val .env DBT_MCP_DB_USER)
+DBT_MCP_DB_PASSWORD=$(env_val .env DBT_MCP_DB_PASSWORD)
 SUPERSET_DB_USER=$(env_val docker/.env DATABASE_USER)
 SUPERSET_DB_PASSWORD=$(env_val docker/.env DATABASE_PASSWORD)
 SUPERSET_DB_NAME=$(env_val docker/.env DATABASE_DB)
@@ -36,6 +38,8 @@ Generated $(date '+%Y-%m-%d %H:%M'). Do not commit this file.
 | Superset | http://localhost:8089 | admin | ${SUPERSET_ADMIN_PASSWORD} |
 | Airflow MCP | http://localhost:5009/mcp/ | (logs into Airflow as mcp) | - |
 | Airflow user for the MCP server | http://localhost:8081 | mcp (read-only viewer) | ${AIRFLOW_MCP_PASSWORD} |
+| dbt MCP | http://localhost:5010/mcp | (connects to Postgres as ${DBT_MCP_DB_USER}) | - |
+| Postgres read-only role (dbt MCP) | localhost:5000 / db ${DB_NAME} | ${DBT_MCP_DB_USER} | ${DBT_MCP_DB_PASSWORD} |
 | Superset MCP | http://localhost:5008/mcp | (no auth, localhost only; acts as admin) | - |
 | Postgres (weather data) | localhost:5000 / db ${DB_NAME} | ${DB_USER} | ${DB_PASSWORD} |
 

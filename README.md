@@ -15,10 +15,11 @@ flowchart LR
     STG --> DA["daily_average"]
     STG --> WR["weather_report"]
     WR --> SS["Superset dashboard"]
-    SS --- MCP["Superset MCP server<br/>(AI clients)"]
-    AF --- AMCP["Airflow MCP server<br/>(AI clients, read-only)"]
     AF{{"Airflow DAG api-dbt-orchestrator<br/>08:00 and 20:00 UTC"}} -. triggers .-> ING
     AF -. triggers .-> DBT
+    SS --- MCP["Superset MCP server<br/>(AI clients)"]
+    AF --- AMCP["Airflow MCP server<br/>(AI clients, read-only)"]
+    DBT --- DMCP["dbt MCP server<br/>(AI clients, read-only role)"]
 ```
 
 ## Stack
@@ -30,6 +31,8 @@ flowchart LR
 | dbt (postgres adapter) | `ghcr.io/dbt-labs/dbt-postgres:1.9.latest` | SQL transformations and tests |
 | Apache Superset | `weather-superset:6.1.0` (built from `apache/superset:6.1.0-py311` + `psycopg2-binary`, `fastmcp`; see `docker/Dockerfile`) | Dashboards and the MCP server |
 | Redis | `redis:7` | Superset cache |
+| Airflow MCP | `weather-airflow-mcp:0.9.1` (community `airflow-mcp-server`; see `airflow-mcp/`) | Read-only MCP access to Airflow |
+| dbt MCP | `weather-dbt-mcp:1.7.1` (community `dbt-core-mcp` on the dbt image; see `dbt-mcp/`) | MCP access to the dbt project |
 | Weatherstack | REST API (`/current`) | Data source |
 
 ## Project structure
@@ -38,16 +41,21 @@ flowchart LR
 weather-data-project/
 ├── .env.example          # Postgres, Weatherstack, dbt path and Docker GID settings
 ├── .gitignore
+├── .mcp.json            # MCP servers for Claude Code (superset, airflow, dbt)
 ├── docker-compose.yaml   # All services and the shared network
 ├── .vscode/              # Editor settings
 ├── airflow/
-│   └── dags/             # orchestrator.py: the api-dbt-orchestrator DAG
+│   ├── dags/             # orchestrator.py: the api-dbt-orchestrator DAG
+│   └── seed_mcp_user.py  # sets the Airflow 'mcp' user's password
+├── airflow-mcp/          # Airflow MCP server image (Dockerfile, pinned requirements, entrypoint)
 ├── api-request/          # api_request.py (API client), insert_records.py (DB load)
 ├── dbt/
 │   ├── profiles.yml      # dbt connection profile (reads env vars)
 │   └── my_project/       # dbt project: models/, tests/, macros/, seeds/, ...
+├── dbt-mcp/              # dbt MCP server image (Dockerfile, HTTP launcher)
 ├── docker/               # Superset Dockerfile, env template, config, setup script
-└── postgres/             # airflow_init.sql, superset_init.sql
+├── postgres/             # airflow_init.sql, superset_init.sql, mcp_reader_init.sh
+└── scripts/              # show_credentials.sh
 ```
 
 ## Quickstart
@@ -81,6 +89,7 @@ docker compose up -d
 | Airflow | http://localhost:8081 | User `admin`. The generated password is in the file printed by `docker exec airflow_container cat /opt/airflow/simple_auth_manager_passwords.json.generated` |
 | Superset | http://localhost:8089 | `admin` / `admin`. Change this password after first login. |
 | Superset MCP | http://localhost:5008/mcp (localhost only) | No auth (local development); acts as the Superset `admin` user |
+| dbt MCP | http://localhost:5010/mcp (localhost only) | No client auth; connects to Postgres as the read-only `mcp_reader` role (`DBT_MCP_DB_PASSWORD` in `.env`) |
 | Airflow MCP | http://localhost:5009/mcp/ (localhost only) | No client auth; logs into Airflow as the read-only `mcp` user (`AIRFLOW_MCP_PASSWORD` in `.env`) |
 | Postgres | `localhost:5000` | `DB_USER` / `DB_PASSWORD` from `.env`, database `DB_NAME` (`db` by default) |
 
@@ -137,6 +146,17 @@ Airflow does not ship its own MCP server (the `common-ai` provider's "MCP connec
 - **Allowing writes** (trigger, pause, clear DAG runs): set `AIRFLOW_MCP_ROLE=op` and `AIRFLOW_MCP_MODE=--unsafe` in `.env`, then `docker compose up -d af airflow_mcp`. Every manual trigger spends a Weatherstack API call.
 - **Clients:** the project [`.mcp.json`](.mcp.json) registers it as `airflow` for Claude Code. For Claude Desktop use `{ "mcpServers": { "airflow": { "url": "http://localhost:5009/mcp/" } } }`. Try: *"Did the weather DAG's last run succeed, and when is the next one?"*
 
+### dbt MCP server
+
+The `dbt_mcp` service runs the community [dbt-core-mcp](https://github.com/NiclasOlofsson/dbt-core-mcp) 1.7.1 (MIT) at `http://localhost:5010/mcp`, so AI clients can see the transformation layer: models, sources, tests, model- and column-level lineage, impact analysis, compiled SQL, ad-hoc queries with `{{ ref() }}`/`{{ source() }}`, and running tests.
+
+- **Same dbt as Airflow:** `dbt-mcp/Dockerfile` installs it into the `dbt-postgres:1.9` image the DAG uses (it runs dbt with its own interpreter), and `pip check` fails the build if that breaks a dbt requirement.
+- **HTTP instead of stdio:** the package only ships a stdio entrypoint; `dbt-mcp/server.py` serves the same tools over Streamable HTTP so it can run in compose like the other MCP servers.
+- **Read-only by default** (`DBT_MCP_MODE=safe`): `build_models`, `run_models`, `load_seeds`, `snapshot_models` and `install_deps` are disabled. `query_database` sends raw SQL to Postgres, so the service connects as `mcp_reader`, a `SELECT`-only role whose sessions are read-only (`postgres/mcp_reader_init.sh`); `drop table ...; commit` fails with *cannot execute DROP TABLE in a read-only transaction*.
+- **No clashes with the DAG:** its `target/` and `logs/` are private in-memory folders, so MCP-triggered dbt commands never overwrite the artifacts of Airflow's scheduled `dbt build`.
+- **Allowing builds:** set `DBT_MCP_MODE=full` and `DBT_MCP_DB_USER`/`DBT_MCP_DB_PASSWORD` to the `DB_USER`/`DB_PASSWORD` values, then `docker compose up -d dbt_mcp`.
+- **Clients:** registered as `dbt` in [`.mcp.json`](.mcp.json). Try: *"Which dbt models and tests depend on stg_weather_data, and do they pass?"*
+
 ## dbt models
 
 | Layer | Model | Materialization | Purpose |
@@ -158,6 +178,7 @@ The Airflow task runs `dbt build`, which runs the models and their tests togethe
 - Image tags are pinned, except the dbt image, which uses the floating `1.9.latest` tag.
 - Superset is exposed on port 8089.
 - A read-only Airflow MCP server (community package) is added for AI clients.
+- A dbt MCP server (community package) is added, connected through a read-only Postgres role.
 - Superset is upgraded from 3.0 to 6.1 (custom image with the Postgres driver and `fastmcp`) to add the built-in MCP server.
 - Superset example data is disabled (`SUPERSET_LOAD_EXAMPLES=no`).
 
@@ -167,4 +188,5 @@ The Airflow task runs `dbt build`, which runs the models and their tests togethe
 - **Init SQL scripts did not run** (`airflow_init.sql`, `superset_init.sql`): Postgres runs these only when its data directory is empty. To reset, run `docker compose down -v`, then delete `postgres/data`. The directory is owned by root, so use `sudo rm -rf postgres/data`.
 - **`superset_init` fails or exits with an error**: check its output with `docker logs superset_init`.
 - **`PermissionError` under `/app/superset_home`** after upgrading from the Superset 3.0 setup (which ran as root): fix the volume owner with `docker run --rm --user root --entrypoint chown -v weather-data-project_superset_home:/h weather-superset:6.1.0 -R superset:superset /h`, then `docker compose restart superset superset_mcp`.
-- **MCP client cannot connect**: check `docker logs superset_mcp` / `docker logs airflow_mcp`; each must print `Uvicorn running on http://0.0.0.0:5008` / `:5009`. If `airflow_mcp` keeps printing `Waiting for Airflow login`, Airflow is still starting or `AIRFLOW_MCP_PASSWORD` is missing from `.env` (recreate `af` after adding it).
+- **`mcp_reader` role missing** (dbt MCP tools fail with an authentication error on an existing database): run `docker exec db bash /docker-entrypoint-initdb.d/mcp_reader_init.sh` once.
+- **MCP client cannot connect**: check `docker logs superset_mcp` / `docker logs airflow_mcp` / `docker logs dbt_mcp`; each must print `Uvicorn running on http://0.0.0.0:5008` / `:5009`. If `airflow_mcp` keeps printing `Waiting for Airflow login`, Airflow is still starting or `AIRFLOW_MCP_PASSWORD` is missing from `.env` (recreate `af` after adding it).

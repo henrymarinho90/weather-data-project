@@ -8,10 +8,12 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+      MCP_READER_PASSWORD: ${DBT_MCP_DB_PASSWORD:-}
     volumes:
     - ./postgres/data:/var/lib/postgresql
     - ./postgres/airflow_init.sql:/docker-entrypoint-initdb.d/airflow_init.sql
     - ./postgres/superset_init.sql:/docker-entrypoint-initdb.d/superset_init.sql
+    - ./postgres/mcp_reader_init.sh:/docker-entrypoint-initdb.d/mcp_reader_init.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h localhost -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -91,6 +93,52 @@ services:
       - my_network
     # Connection check only; Airflow's DAG runs `dbt build` on schedule
     command: debug
+
+  # MCP server for AI clients to inspect and test the dbt project: http://localhost:5010/mcp
+  dbt_mcp:
+    container_name: dbt_mcp
+    # dbt-core-mcp on the same dbt image Airflow uses, see dbt-mcp/Dockerfile
+    build: ./dbt-mcp
+    image: weather-dbt-mcp:1.7.1
+    user: "1000:1000"
+    environment:
+      HOME: /tmp
+      DBT_PROFILES_DIR: /usr/app
+      DBT_PROJECT_DIR: /usr/app/my_project
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      # Read-only role by default: query_database runs raw SQL. For
+      # DBT_MCP_MODE=full set these to the DB_USER/DB_PASSWORD values
+      DB_USER: ${DBT_MCP_DB_USER:-mcp_reader}
+      DB_PASSWORD: ${DBT_MCP_DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      # safe = inspect, lineage, query and test; full = also build/run/seed models
+      DBT_MCP_MODE: ${DBT_MCP_MODE:-safe}
+    volumes:
+      - ./dbt:/usr/app
+      # dbt-core-mcp ignores DBT_PROFILES_DIR: it only reads profiles.yml from
+      # the project dir or ~/.dbt (HOME=/tmp), so expose the shared one there
+      - ./dbt/profiles.yml:/tmp/.dbt/profiles.yml:ro
+    # Private target/ and logs/ so MCP-triggered dbt commands never collide
+    # with the artifacts of Airflow's scheduled `dbt build`
+    tmpfs:
+      - /usr/app/my_project/target:uid=1000,gid=1000
+      - /usr/app/my_project/logs:uid=1000,gid=1000
+    working_dir: /usr/app/my_project
+    restart: unless-stopped
+    ports:
+      # Localhost only: no client auth
+      - 127.0.0.1:5010:5010
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 5010), 3)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - my_network
 
   redis:
     container_name: superset_cache
