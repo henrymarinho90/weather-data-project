@@ -6,15 +6,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-env_val() { grep -E "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2-; }
+env_val() { { grep -E "^$2=" "$1" 2>/dev/null || true; } | tail -1 | cut -d= -f2-; }
 
 DB_USER=$(env_val .env DB_USER)
 DB_PASSWORD=$(env_val .env DB_PASSWORD)
 DB_NAME=$(env_val .env DB_NAME)
+AIRFLOW_MCP_PASSWORD=$(env_val .env AIRFLOW_MCP_PASSWORD)
 SUPERSET_DB_USER=$(env_val docker/.env DATABASE_USER)
 SUPERSET_DB_PASSWORD=$(env_val docker/.env DATABASE_PASSWORD)
 SUPERSET_DB_NAME=$(env_val docker/.env DATABASE_DB)
-SUPERSET_ADMIN_PASSWORD=$(grep -m1 -oP '^ADMIN_PASSWORD="\K[^"]+' docker/docker-init.sh || echo admin)
+# The image's docker-init.sh creates admin with ${ADMIN_PASSWORD:-admin}
+SUPERSET_ADMIN_PASSWORD=$(env_val docker/.env ADMIN_PASSWORD)
+SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
 
 # Airflow standalone generates the admin password on first start
 AIRFLOW_PASSWORD=$(docker exec airflow_container \
@@ -31,6 +34,8 @@ Generated $(date '+%Y-%m-%d %H:%M'). Do not commit this file.
 |---|---|---|---|
 | Airflow | http://localhost:8081 | admin | ${AIRFLOW_PASSWORD} |
 | Superset | http://localhost:8089 | admin | ${SUPERSET_ADMIN_PASSWORD} |
+| Airflow MCP | http://localhost:5009/mcp/ | (logs into Airflow as mcp) | - |
+| Airflow user for the MCP server | http://localhost:8081 | mcp (read-only viewer) | ${AIRFLOW_MCP_PASSWORD} |
 | Superset MCP | http://localhost:5008/mcp | (no auth, localhost only; acts as admin) | - |
 | Postgres (weather data) | localhost:5000 / db ${DB_NAME} | ${DB_USER} | ${DB_PASSWORD} |
 

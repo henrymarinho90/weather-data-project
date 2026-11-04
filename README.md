@@ -16,6 +16,7 @@ flowchart LR
     STG --> WR["weather_report"]
     WR --> SS["Superset dashboard"]
     SS --- MCP["Superset MCP server<br/>(AI clients)"]
+    AF --- AMCP["Airflow MCP server<br/>(AI clients, read-only)"]
     AF{{"Airflow DAG api-dbt-orchestrator<br/>08:00 and 20:00 UTC"}} -. triggers .-> ING
     AF -. triggers .-> DBT
 ```
@@ -80,6 +81,7 @@ docker compose up -d
 | Airflow | http://localhost:8081 | User `admin`. The generated password is in the file printed by `docker exec airflow_container cat /opt/airflow/simple_auth_manager_passwords.json.generated` |
 | Superset | http://localhost:8089 | `admin` / `admin`. Change this password after first login. |
 | Superset MCP | http://localhost:5008/mcp (localhost only) | No auth (local development); acts as the Superset `admin` user |
+| Airflow MCP | http://localhost:5009/mcp/ (localhost only) | No client auth; logs into Airflow as the read-only `mcp` user (`AIRFLOW_MCP_PASSWORD` in `.env`) |
 | Postgres | `localhost:5000` | `DB_USER` / `DB_PASSWORD` from `.env`, database `DB_NAME` (`db` by default) |
 
 To print every login in one place (the Airflow password is read from the running container), run `./scripts/show_credentials.sh`. Save it locally with `./scripts/show_credentials.sh > credentials.local.md`; that file is gitignored.
@@ -103,7 +105,9 @@ To print every login in one place (the Airflow password is read from the running
 
    To do it by hand instead: Settings → Database Connections → add PostgreSQL with host `db`, port `5432`, database `db` and the credentials from `.env`; then add `dev.weather_report` as a dataset and build charts from it.
 
-## AI access with the Superset MCP server
+## AI access with MCP servers
+
+### Superset MCP server
 
 The `superset_mcp` service runs Superset's built-in [MCP server](https://superset.apache.org/admin-docs/configuration/mcp-server) (`superset mcp run`) at `http://localhost:5008/mcp` (Streamable HTTP). AI clients can use it to list and inspect dashboards, charts and datasets, read chart data, run SQL and create charts or dashboards.
 
@@ -122,6 +126,16 @@ The `superset_mcp` service runs Superset's built-in [MCP server](https://superse
 The server lists a few tools up front (`health_check`, `get_instance_info`, `search_tools`, `call_tool`); the rest (`list_dashboards`, `get_chart_data`, `generate_chart`, `execute_sql`, ...) are found with `search_tools` and run through `call_tool`. Try asking your client: *"Using Superset, what was the average temperature in New York last week?"*
 
 **Security:** authentication is off (`MCP_AUTH_ENABLED = False` in `docker/superset_config_docker.py`) and every request runs as `admin`, so the port is bound to `127.0.0.1`. Before exposing it anywhere else, enable JWT auth as described in the Superset docs, and consider `MCP_DISABLED_TOOLS = {"execute_sql"}`.
+
+### Airflow MCP server
+
+Airflow does not ship its own MCP server (the `common-ai` provider's "MCP connection" is the opposite direction: it lets Airflow tasks *call* MCP servers). The `airflow_mcp` service runs the community [airflow-mcp-server](https://github.com/abhishekbhakat/airflow-mcp-server) 0.9.1 (MIT) for Airflow 3 at `http://localhost:5009/mcp/` (keep the trailing slash).
+
+- **Read-only by default:** it runs with `--safe` (GET tools only, 68 tools: DAGs, runs, task instances, logs, XComs, assets, import errors...) and logs into Airflow as a dedicated `mcp` user with the `viewer` role, so connections, variables and config return 403.
+- **Login:** `airflow/seed_mcp_user.py` gives the `mcp` user the password from `AIRFLOW_MCP_PASSWORD` before Airflow starts. `airflow-mcp/entrypoint.sh` exchanges it for a JWT at `/auth/token` and restarts the server every 23 h, before the 24 h token expires.
+- **Pinned dependencies:** `airflow-mcp/requirements.txt` is exported from the package's own `uv.lock`; newer `mcp`/`pydantic` releases break 0.9.1. The Dockerfile also patches one line so JSON results are sent as text too (see the comment there).
+- **Allowing writes** (trigger, pause, clear DAG runs): set `AIRFLOW_MCP_ROLE=op` and `AIRFLOW_MCP_MODE=--unsafe` in `.env`, then `docker compose up -d af airflow_mcp`. Every manual trigger spends a Weatherstack API call.
+- **Clients:** the project [`.mcp.json`](.mcp.json) registers it as `airflow` for Claude Code. For Claude Desktop use `{ "mcpServers": { "airflow": { "url": "http://localhost:5009/mcp/" } } }`. Try: *"Did the weather DAG's last run succeed, and when is the next one?"*
 
 ## dbt models
 
@@ -143,6 +157,7 @@ The Airflow task runs `dbt build`, which runs the models and their tests togethe
 - The DockerOperator mount uses a configurable host path (`DBT_HOST_PATH`), and the Docker network has a fixed name (`weather_network`).
 - Image tags are pinned, except the dbt image, which uses the floating `1.9.latest` tag.
 - Superset is exposed on port 8089.
+- A read-only Airflow MCP server (community package) is added for AI clients.
 - Superset is upgraded from 3.0 to 6.1 (custom image with the Postgres driver and `fastmcp`) to add the built-in MCP server.
 - Superset example data is disabled (`SUPERSET_LOAD_EXAMPLES=no`).
 
@@ -152,4 +167,4 @@ The Airflow task runs `dbt build`, which runs the models and their tests togethe
 - **Init SQL scripts did not run** (`airflow_init.sql`, `superset_init.sql`): Postgres runs these only when its data directory is empty. To reset, run `docker compose down -v`, then delete `postgres/data`. The directory is owned by root, so use `sudo rm -rf postgres/data`.
 - **`superset_init` fails or exits with an error**: check its output with `docker logs superset_init`.
 - **`PermissionError` under `/app/superset_home`** after upgrading from the Superset 3.0 setup (which ran as root): fix the volume owner with `docker run --rm --user root --entrypoint chown -v weather-data-project_superset_home:/h weather-superset:6.1.0 -R superset:superset /h`, then `docker compose restart superset superset_mcp`.
-- **MCP client cannot connect**: check `docker logs superset_mcp`; the server must print `Uvicorn running on http://0.0.0.0:5008`.
+- **MCP client cannot connect**: check `docker logs superset_mcp` / `docker logs airflow_mcp`; each must print `Uvicorn running on http://0.0.0.0:5008` / `:5009`. If `airflow_mcp` keeps printing `Waiting for Airflow login`, Airflow is still starting or `AIRFLOW_MCP_PASSWORD` is missing from `.env` (recreate `af` after adding it).

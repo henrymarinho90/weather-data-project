@@ -3,6 +3,10 @@
     "superset": {
       "type": "http",
       "url": "http://localhost:5008/mcp"
+    },
+    "airflow": {
+      "type": "http",
+      "url": "http://localhost:5009/mcp/"
     }
   }
 }
