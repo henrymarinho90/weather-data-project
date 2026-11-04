@@ -152,7 +152,7 @@ CI (`.github/workflows/ci.yml`) has four jobs:
 - **security-scan:** Trivy on the repository (dependency vulnerabilities, committed secrets, Dockerfile/compose misconfigurations); fails on fixable HIGH/CRITICAL findings.
 - **integration:** starts Postgres and Airflow, runs the whole DAG in mock mode, checks the marts have data, then takes a backup and runs the restore test.
 
-Dependabot (`.github/dependabot.yml`) opens weekly grouped updates for actions, Python requirements, Dockerfiles and compose images; major versions of `mcp`/`fastmcp` are ignored because they break the MCP servers.
+Dependabot (`.github/dependabot.yml`) opens weekly grouped updates for actions and Python requirements, and patch-only updates for container images. Major versions of `mcp`/`fastmcp` are ignored because they break the MCP servers; minor or major image upgrades (Python, Superset, Redis, nginx...) are deliberate, manual changes.
 
 ## Project structure
 
