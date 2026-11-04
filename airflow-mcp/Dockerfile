@@ -1,6 +1,6 @@
 # Community MCP server for Airflow 3 (https://github.com/abhishekbhakat/airflow-mcp-server).
 # Airflow itself does not ship an MCP server.
-FROM python:3.12.16-slim
+FROM python:3.15.0-slim
 
 RUN useradd --create-home mcp
 COPY requirements.txt /tmp/requirements.txt
