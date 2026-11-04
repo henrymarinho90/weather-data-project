@@ -18,6 +18,15 @@ def ingest_weather_data():
     return main()
 
 
+def dbt_host_path():
+    """HOST path of ./dbt: from .env, else as detected by airflow/start.sh."""
+    if path := os.environ.get("DBT_HOST_PATH"):
+        return path
+    detected = os.path.join(os.environ.get("AIRFLOW_HOME", "/opt/airflow"), "dbt_host_path")
+    with open(detected) as f:
+        return f.read().strip()
+
+
 def dbt_task(task_id, command):
     """Run a dbt command in the dbt image, on the compose network."""
     return DockerOperator(
@@ -25,20 +34,31 @@ def dbt_task(task_id, command):
         image=os.environ["DBT_IMAGE"],
         command=command,
         working_dir="/usr/app/weather",
-        # Same uid/gid as the host user, so target/ and logs/ stay writable for them
         user=f"{os.environ.get('HOST_UID', '1000')}:{os.environ.get('HOST_GID', '1000')}",
         environment={
             "HOME": "/tmp",
             "DBT_PROFILES_DIR": "/usr/app",
+            # Artifacts and logs stay in the (auto-removed) container: the project
+            # mount is read-only, whoever owns the checkout on the host
+            "DBT_TARGET_PATH": "/tmp/dbt-target",
+            "DBT_LOG_PATH": "/tmp/dbt-logs",
             "DB_HOST": os.environ.get("DB_HOST", "db"),
             "DB_PORT": os.environ.get("DB_PORT", "5432"),
             "DB_USER": os.environ["DB_USER"],
             "DB_PASSWORD": os.environ["DB_PASSWORD"],
             "DB_NAME": os.environ["DB_NAME"],
         },
-        # Must be a HOST path: DockerOperator talks to the host docker daemon
-        mounts=[Mount(source=os.environ["DBT_HOST_PATH"], target="/usr/app", type="bind")],
-        network_mode="weather_network",
+        # Must be a HOST path: DockerOperator talks to the host docker daemon.
+        # airflow/start.sh detects it when DBT_HOST_PATH is not set
+        mounts=[
+            Mount(
+                source=dbt_host_path(),
+                target="/usr/app",
+                type="bind",
+                read_only=True,
+            )
+        ],
+        network_mode=os.environ.get("DOCKER_NETWORK", "weather_network"),
         docker_url="unix:///var/run/docker.sock",
         auto_remove="success",
         mount_tmp_dir=False,

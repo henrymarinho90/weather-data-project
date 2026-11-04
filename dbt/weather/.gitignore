@@ -1,4 +1,6 @@
 
-target/
+target/*
+!target/.gitkeep
 dbt_packages/
-logs/
+logs/*
+!logs/.gitkeep

@@ -20,14 +20,14 @@ DB_READER_PASSWORD=$(env_val .env DB_READER_PASSWORD)
 AIRFLOW_DB_PASSWORD=$(env_val .env AIRFLOW_DB_PASSWORD)
 SUPERSET_DB_PASSWORD=$(env_val .env SUPERSET_DB_PASSWORD)
 AIRFLOW_MCP_PASSWORD=$(env_val .env AIRFLOW_MCP_PASSWORD)
-SUPERSET_ADMIN_PASSWORD=$(env_val docker/.env ADMIN_PASSWORD)
+SUPERSET_ADMIN_PASSWORD=$(env_val .env SUPERSET_ADMIN_PASSWORD)
 SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
 
 # Airflow standalone generates the admin password on first start
-AIRFLOW_PASSWORD=$(docker exec airflow_container \
+AIRFLOW_PASSWORD=$(docker compose exec -T af \
   cat /opt/airflow/simple_auth_manager_passwords.json.generated 2>/dev/null \
   | python3 -c 'import sys,json; print(json.load(sys.stdin).get("admin",""))' 2>/dev/null || true)
-AIRFLOW_PASSWORD=${AIRFLOW_PASSWORD:-"<not available - is airflow_container running?>"}
+AIRFLOW_PASSWORD=${AIRFLOW_PASSWORD:-"<not available - is the af service running?>"}
 
 cat <<EOF
 # Local credentials - weather-data-project

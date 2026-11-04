@@ -16,7 +16,7 @@ import requests
 BASE = "http://localhost:8088/api/v1"
 TIMEOUT = 30
 ADMIN_USER = os.getenv("SUPERSET_ADMIN_USER", "admin")
-# docker-init.sh creates the admin with $ADMIN_PASSWORD (docker/.env)
+# docker-init.sh creates the admin with $ADMIN_PASSWORD (SUPERSET_ADMIN_PASSWORD in .env)
 ADMIN_PASSWORD = os.getenv("SUPERSET_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "admin"))
 DB_NAME = "weather_db"
 # Set by docker-compose from .env: the read-only weather_reader role

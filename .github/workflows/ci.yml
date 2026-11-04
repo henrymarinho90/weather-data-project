@@ -40,41 +40,53 @@ jobs:
           --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --ignore-unfixed
           --exit-code 1 /src
 
-  # End to end: Postgres + Airflow, the whole DAG in mock mode (ingest -> dbt build ->
-  # source freshness), then a backup and a restore test
+  # End to end with the configuration a server/Coolify deploy uses: env block from
+  # `make coolify-env` (root user, DBT_HOST_PATH auto-detected), fresh checkout.
+  # Runs the whole DAG in mock mode (ingest -> dbt build -> source freshness),
+  # starts the dbt MCP server, then takes a backup and runs the restore test.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Generate env files (USE_MOCK_API=true by default)
-        run: ./scripts/init_env.sh
-      - name: Start Postgres and Airflow
+      - name: Env as for Coolify (make coolify-env + the server's docker gid)
+        run: |
+          ./scripts/init_env.sh --coolify > .env
+          sed -i "s/^DOCKER_GID=.*/DOCKER_GID=$(stat -c %g /var/run/docker.sock)/" .env
+      - name: Start Postgres, Airflow and the dbt MCP server
         run: |
           docker pull "$(grep '^DBT_IMAGE=' .env | cut -d= -f2)"
-          docker compose up -d db af
+          docker compose up -d --build db af dbt_mcp
       - name: Wait for Airflow to load the DAG
         run: |
           for i in $(seq 1 60); do
-            docker exec airflow_container airflow dags list 2>/dev/null | grep -q api-dbt-orchestrator && break
+            docker compose exec -T af airflow dags list 2>/dev/null | grep -q api-dbt-orchestrator && break
             sleep 10
           done
-          docker exec airflow_container airflow dags list-import-errors
+          docker compose exec -T af airflow dags list-import-errors
+          docker compose logs af | grep "start.sh: DBT_HOST_PATH=$PWD/dbt"
       - name: Run the DAG
         run: |
-          docker exec airflow_container airflow dags test api-dbt-orchestrator | tee dag-test.log
+          docker compose exec -T af airflow dags test api-dbt-orchestrator | tee dag-test.log
           grep -q "DagRun Finished:.*state=success" dag-test.log
       - name: Check the marts have data
         run: |
-          rows=$(docker exec db psql -U postgres -d "$(grep '^DB_NAME=' .env | cut -d= -f2)" -tAc \
+          rows=$(docker compose exec -T db psql -U postgres -d "$(grep '^DB_NAME=' .env | cut -d= -f2)" -tAc \
             "select count(*) from dev.weather_report")
           echo "weather_report rows: $rows"
           [ "$rows" -ge 1 ]
+      - name: dbt MCP server is healthy
+        run: |
+          for i in $(seq 1 30); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q dbt_mcp)")" = healthy ] && exit 0
+            sleep 5
+          done
+          exit 1
       - name: Backup and restore test
         run: |
           docker compose up -d db_backup
-          for i in $(seq 1 30); do docker logs db_backup 2>&1 | grep -q "backup written" && break; sleep 2; done
-          docker exec db_backup /opt/backup/verify.sh
+          for i in $(seq 1 30); do docker compose logs db_backup | grep -q "backup written" && break; sleep 2; done
+          docker compose exec -T db_backup /opt/backup/verify.sh
       - name: Logs on failure
         if: failure()
-        run: docker compose logs --tail=200 db af db_backup
+        run: docker compose logs --tail=200 db af dbt_mcp db_backup

@@ -2,12 +2,14 @@
 __pycache__/
 *.pyc
 .env
-dbt/weather/target/
-dbt/weather/logs/
+# Kept empty in git: dbt_mcp mounts private tmpfs folders on these paths
+dbt/weather/target/*
+!dbt/weather/target/.gitkeep
+dbt/weather/logs/*
+!dbt/weather/logs/.gitkeep
 dbt/weather/dbt_packages/
 dbt/.user.yml
 logs/
 superset_home/
-docker/.env
 credentials.local.md
 backups/

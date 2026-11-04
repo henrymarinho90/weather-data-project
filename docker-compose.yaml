@@ -1,6 +1,6 @@
 # Weather ELT pipeline: Weatherstack -> Postgres -> dbt (via Airflow) -> Superset,
-# plus MCP servers for AI clients behind mcp_gateway. Create .env and
-# docker/.env first with `make init`. Every port is published on 127.0.0.1 only.
+# plus MCP servers for AI clients behind mcp_gateway. Create .env first with
+# `make init` (servers: `make coolify-env`). Every port is published on 127.0.0.1 only.
 
 x-dbt-env: &dbt-env
   HOME: /tmp
@@ -12,11 +12,30 @@ x-dbt-env: &dbt-env
 x-superset: &superset
   build: ./docker
   image: weather-superset:6.1.0
-  env_file: docker/.env
   environment: &superset-env
+    # Metadata database (superset_db in the project's Postgres)
+    DATABASE_DIALECT: postgresql+psycopg2
+    DATABASE_HOST: db
+    DATABASE_PORT: 5432
+    DATABASE_USER: superset
     DATABASE_PASSWORD: ${SUPERSET_DB_PASSWORD:?run make init}
+    DATABASE_DB: superset_db
     # Connection Superset charts (and its MCP server) use for the weather data: read-only role
     WEATHER_DB_URI: postgresql://weather_reader:${DB_READER_PASSWORD}@db:5432/${DB_NAME}
+    # Signs sessions and encrypts stored DB passwords: never change it after the first start
+    SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?run make init}
+    # Password of the "admin" user, applied when docker-init.sh first creates it
+    ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?run make init}
+    # Public address (links, secure cookies); the https URL when behind a reverse proxy
+    SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-http://localhost:8089}
+    PYTHONPATH: /app/pythonpath:/app/docker/pythonpath_dev
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+    FLASK_DEBUG: "false"
+    SUPERSET_ENV: production
+    SUPERSET_LOAD_EXAMPLES: "no"
+    CYPRESS_CONFIG: "false"
+    SUPERSET_PORT: 8088
   volumes: &superset-volumes
     - ./docker/superset_config.py:/app/pythonpath/superset_config.py:ro
     - ./docker/superset_config_docker.py:/app/pythonpath/superset_config_docker.py:ro
@@ -124,13 +143,16 @@ services:
       USE_MOCK_API: ${USE_MOCK_API:-true}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       DBT_IMAGE: ${DBT_IMAGE:?run make init}
-      DBT_HOST_PATH: ${DBT_HOST_PATH:?run make init}
+      # Empty = detected at startup from this container's own mounts (airflow/start.sh)
+      DBT_HOST_PATH: ${DBT_HOST_PATH:-}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-weather_network}
       HOST_UID: ${HOST_UID:-1000}
       HOST_GID: ${HOST_GID:-1000}
     volumes:
       - ./airflow/dags:/opt/airflow/dags:ro
       - ./api-request:/opt/airflow/api-request:ro
       - ./airflow/seed_mcp_user.py:/opt/airflow/seed_mcp_user.py:ro
+      - ./airflow/start.sh:/opt/airflow/start.sh:ro
       # Lets the DockerOperator start dbt containers. Root-equivalent on the host:
       # anything that can change the DAG code controls the Docker daemon
       - /var/run/docker.sock:/var/run/docker.sock
@@ -141,8 +163,7 @@ services:
         condition: service_healthy
     networks:
       - my_network
-    command: >
-      bash -c "airflow db migrate && python /opt/airflow/seed_mcp_user.py && airflow standalone"
+    command: ["bash", "/opt/airflow/start.sh"]
 
   dbt:
     container_name: dbt_container
@@ -155,8 +176,11 @@ services:
       <<: *dbt-env
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      # Artifacts and logs inside the container: the project mount stays read-only
+      DBT_TARGET_PATH: /tmp/dbt-target
+      DBT_LOG_PATH: /tmp/dbt-logs
     volumes:
-      - ./dbt:/usr/app
+      - ./dbt:/usr/app:ro
     working_dir: /usr/app/weather
     depends_on:
       db:
@@ -378,7 +402,8 @@ services:
 
 networks:
   my_network:
-    name: weather_network
+    # The DAG's DockerOperator attaches dbt containers to this network by name
+    name: ${DOCKER_NETWORK:-weather_network}
     driver: bridge
   # Only docker_mcp and docker_proxy: other containers cannot reach the Docker API
   docker_api:
