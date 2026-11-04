@@ -8,8 +8,8 @@ jobs:
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
@@ -20,7 +20,7 @@ jobs:
   compose-and-dbt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Exercises the same script users run (random secrets, uid/gid, dbt dirs)
       - name: Generate env files
         run: ./scripts/init_env.sh
@@ -33,7 +33,7 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Trivy (fails on fixable HIGH/CRITICAL findings)
         run: >
           docker run --rm -v "$PWD:/src:ro" aquasec/trivy:0.76.1 fs
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Env as for Coolify (make coolify-env + the server's docker gid)
         run: |
           ./scripts/init_env.sh --coolify > .env
