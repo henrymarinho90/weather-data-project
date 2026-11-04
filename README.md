@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/henrymarinho90/weather-data-project/actions/workflows/ci.yml/badge.svg)](https://github.com/henrymarinho90/weather-data-project/actions/workflows/ci.yml)
 
-An Airflow-orchestrated ELT pipeline that pulls current weather from the Weatherstack API into Postgres twice a day, transforms and tests it with dbt, and reports it in Apache Superset. Four MCP servers let AI clients (Claude Code, Claude Desktop, ...) inspect every layer read-only. Everything runs under Docker Compose.
+An Airflow-orchestrated ELT pipeline that pulls current weather from the Weatherstack API into Postgres twice a day, transforms and tests it with dbt, and reports it in Apache Superset. Five MCP servers let AI clients (Claude Code, Claude Desktop, ...) inspect every layer read-only. Everything runs under Docker Compose.
 
 Built by following the YouTube tutorial [How to build an automated data pipeline using Airflow, dbt, Postgres, and Superset](https://www.youtube.com/watch?v=vMgFadPxOLk), with the changes listed under [Differences from the tutorial](#differences-from-the-tutorial).
 
@@ -24,6 +24,7 @@ flowchart LR
     GW --- AMCP["Airflow MCP"]
     GW --- DMCP["dbt MCP"]
     GW --- PMCP["Postgres MCP Pro"]
+    GW --- XMCP["Docker MCP"] --- DP["docker_proxy<br/>GET-only Docker API"]
 ```
 
 ## Stack
@@ -39,6 +40,8 @@ flowchart LR
 | Airflow MCP | `weather-airflow-mcp:0.9.1` (community `airflow-mcp-server`, `airflow-mcp/`) | DAGs, runs, task logs (read-only) |
 | dbt MCP | `weather-dbt-mcp:1.7.1` (community `dbt-core-mcp`, `dbt-mcp/`) | Models, lineage, queries, tests |
 | Postgres MCP | `crystaldba/postgres-mcp:0.3.0` | Schema, restricted SQL, health, slow queries |
+| Docker MCP | `weather-docker-mcp:1.0.0` (this repo, `docker-mcp/`) | Container status, health, logs, stats (read-only) |
+| Docker API proxy | `tecnativa/docker-socket-proxy:v0.5.0` | GET-only Docker API for the Docker MCP |
 | MCP gateway | `nginx:1.30.6-alpine` (`mcp-gateway/`) | Single localhost entry point with Host/Origin checks |
 
 ## Quickstart
@@ -73,6 +76,7 @@ All ports are published on `127.0.0.1` only.
 | Airflow MCP | http://localhost:5009/mcp/ (trailing slash) | No client auth |
 | dbt MCP | http://localhost:5010/mcp | No client auth |
 | Postgres MCP | http://localhost:5011/sse (SSE) | No client auth |
+| Docker MCP | http://localhost:5012/mcp | No client auth |
 
 ## Using it
 
@@ -92,18 +96,19 @@ All ports are published on `127.0.0.1` only.
 
 ## AI access with MCP servers
 
-The project [`.mcp.json`](.mcp.json) registers all four servers for Claude Code: start `claude` in the repo folder, approve them, check with `/mcp`. For Claude Desktop, add the URLs from [Services](#services) to `claude_desktop_config.json` (the Postgres one needs `"type": "sse"`).
+The project [`.mcp.json`](.mcp.json) registers all five servers for Claude Code: start `claude` in the repo folder, approve them, check with `/mcp`. For Claude Desktop, add the URLs from [Services](#services) to `claude_desktop_config.json` (the Postgres one needs `"type": "sse"`).
 
 | Server | What AI clients can do | Guard rails |
 |---|---|---|
 | **Superset** (built-in, [docs](https://superset.apache.org/admin-docs/configuration/mcp-server)) | List/inspect dashboards, charts and datasets, read chart data, create charts, run SQL. Tools beyond the first four are found via `search_tools` and run via `call_tool`. | Acts as Superset `admin` (auth off for local use), but SQL reaches Postgres as `weather_reader` and the connection disallows DML. |
 | **Airflow** ([airflow-mcp-server](https://github.com/abhishekbhakat/airflow-mcp-server) 0.9.1) | 68 GET tools: DAGs, runs, task instances, logs, XComs, import errors. | `--safe` mode and an Airflow `viewer` user (`mcp`); connections, variables and config return 403. |
 | **dbt** ([dbt-core-mcp](https://github.com/NiclasOlofsson/dbt-core-mcp) 1.7.1) | Project info, model and column lineage, impact analysis, compiled SQL, `{{ ref() }}` queries, running tests. | Safe mode disables build/run/seed/snapshot/deps; connects as `weather_reader`; the dbt project is mounted read-only with private in-memory `target/` and `logs/`. |
+| **Docker** (this repo, `docker-mcp/server.py`) | `get_stack_health`, `list_containers`, `get_container_details`, `get_container_logs` (tail/since/contains), `get_container_stats`, `list_images`. | Only this compose project's containers; selected fields only (never `Env` or commands); logs pass through a secret-masking filter; the Docker API is reached through `docker_proxy` with `POST=0` (writes return 403) on an internal network no other container joins. |
 | **Postgres** ([Postgres MCP Pro](https://github.com/crystaldba/postgres-mcp) 0.3.0) | Schemas, object details, SQL, explain plans, health checks, slowest queries (`pg_stat_statements`). | `--access-mode=restricted` plus `weather_reader`. Index simulation needs `hypopg`, which the official image lacks. |
 
-Example prompts: *"Did the weather DAG's last run succeed?"*, *"Which models depend on stg_weather_data and do their tests pass?"*, *"What was the average temperature in New York last week?"*, *"Show the slowest queries."*
+Example prompts: *"Is the whole stack healthy? Show the last errors in the Airflow logs."*, *"Did the weather DAG's last run succeed?"*, *"Which models depend on stg_weather_data and do their tests pass?"*, *"What was the average temperature in New York last week?"*, *"Show the slowest queries."*
 
-**Why a gateway:** none of the four servers validates the `Host`/`Origin` headers, so a malicious web page could reach them through DNS rebinding. `mcp_gateway` is their only published port and answers 421 for a foreign `Host` and 403 for a foreign `Origin`.
+**Why a gateway:** none of the five servers validates the `Host`/`Origin` headers, so a malicious web page could reach them through DNS rebinding. `mcp_gateway` is their only published port and answers 421 for a foreign `Host` and 403 for a foreign `Origin`.
 
 **Allowing writes** (an AI client can then change data or, via Airflow triggers, spend API calls): Airflow `AIRFLOW_MCP_ROLE=op` + `AIRFLOW_MCP_MODE=--unsafe`; dbt `DBT_MCP_MODE=full` + `DBT_MCP_DB_USER`/`DBT_MCP_DB_PASSWORD` set to the `DB_USER`/`DB_PASSWORD` values. Then `make up`.
 
@@ -147,6 +152,7 @@ weather-data-project/
 │   ├── profiles.yml      # connection profile (env vars)
 │   └── weather/          # dbt project: models/staging, models/marts, tests
 ├── dbt-mcp/              # dbt MCP image: Dockerfile, HTTP launcher
+├── docker-mcp/           # read-only Docker MCP server: server.py, docker_helpers.py, locked requirements
 ├── docker/               # Superset: Dockerfile, env template, config, superset_setup.py
 ├── mcp-gateway/          # nginx config for the MCP gateway
 ├── postgres/init_roles.sh
@@ -162,7 +168,7 @@ weather-data-project/
 - dbt project restructured (staging view, marts, grain/range/unit tests, freshness on observation time, UTC observation timestamps).
 - Portable setup: `DBT_HOST_PATH`, uid/gid and Docker socket group detected by `make init`; fixed network name; one `DBT_IMAGE`; Postgres data in a named volume.
 - Exact image tags; Superset upgraded from 3.0 to 6.1 for its MCP server; example data disabled.
-- Four MCP servers behind a gateway, plus CI, unit tests, ruff and a Makefile.
+- Five MCP servers (Superset, Airflow, dbt, Postgres, Docker) behind a gateway, plus CI, unit tests, ruff and a Makefile.
 
 ## Troubleshooting
 

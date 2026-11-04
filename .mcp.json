@@ -15,6 +15,10 @@
     "postgres": {
       "type": "sse",
       "url": "http://localhost:5011/sse"
+    },
+    "docker": {
+      "type": "http",
+      "url": "http://localhost:5012/mcp"
     }
   }
 }

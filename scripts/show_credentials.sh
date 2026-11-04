@@ -64,4 +64,5 @@ dbt has no web UI or login of its own: it connects to Postgres as ${DB_USER}.
 | Airflow | http://localhost:5009/mcp/ | Airflow user mcp (password ${AIRFLOW_MCP_PASSWORD}) |
 | dbt | http://localhost:5010/mcp | Postgres weather_reader (safe mode) |
 | Postgres | http://localhost:5011/sse | Postgres weather_reader, restricted mode |
+| Docker | http://localhost:5012/mcp | Read-only Docker API (docker_proxy), this project's containers only |
 EOF
