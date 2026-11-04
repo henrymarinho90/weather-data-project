@@ -93,11 +93,13 @@ To print every login in one place (the Airflow password is read from the running
    ```bash
    docker exec airflow_container python /opt/airflow/api-request/seed_test_data.py --days 30
    ```
-4. In Superset, go to Settings, then Database Connections, and add a PostgreSQL connection:
-   - Host `db`, port `5432`, database `db`
-   - Username and password from `DB_USER` and `DB_PASSWORD` in `.env`
-5. Add `dev.weather_report` as a dataset.
-6. Build a chart and a dashboard from it, then set an auto-refresh interval on the dashboard.
+4. Set up Superset once the DAG has run at least once (so the dbt tables exist). This registers the `weather_db` connection, the datasets `weather_report`, `daily_average` and `stg_weather_data`, three charts, and a **Weather Dashboard** that auto-refreshes every 5 minutes. It is safe to re-run.
+   ```bash
+   docker exec superset_app python /app/docker/superset_setup.py
+   ```
+   Then open http://localhost:8089/superset/dashboard/weather/. If you changed `DB_USER`/`DB_PASSWORD` in `.env`, pass the connection string with `docker exec -e WEATHER_DB_URI=postgresql://USER:PASSWORD@db:5432/db superset_app python /app/docker/superset_setup.py`.
+
+   To do it by hand instead: Settings → Database Connections → add PostgreSQL with host `db`, port `5432`, database `db` and the credentials from `.env`; then add `dev.weather_report` as a dataset and build charts from it.
 
 ## dbt models
 
