@@ -1,0 +1,17 @@
+name: 'weather'
+version: '1.0.0'
+profile: 'weather'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  weather:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

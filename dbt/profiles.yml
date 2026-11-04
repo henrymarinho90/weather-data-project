@@ -1,4 +1,4 @@
-my_project:
+weather:
   target: dev
   outputs:
     dev:

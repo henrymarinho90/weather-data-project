@@ -2,10 +2,9 @@
 __pycache__/
 *.pyc
 .env
-postgres/data/
-dbt/my_project/target/
-dbt/my_project/logs/
-dbt/my_project/dbt_packages/
+dbt/weather/target/
+dbt/weather/logs/
+dbt/weather/dbt_packages/
 dbt/.user.yml
 logs/
 superset_home/

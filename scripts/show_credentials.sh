@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
 # Print login details for every service in this stack, read from .env files
 # and the running Airflow container. Usage:
-#   ./scripts/show_credentials.sh                       # print to terminal
+#   ./scripts/show_credentials.sh                         # print to terminal
 #   ./scripts/show_credentials.sh > credentials.local.md  # save (gitignored)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 env_val() { { grep -E "^$2=" "$1" 2>/dev/null || true; } | tail -1 | cut -d= -f2-; }
 
+PG_PORT=$(env_val .env POSTGRES_HOST_PORT)
+PG_PORT=${PG_PORT:-5434}
+PG_SUPER=$(env_val .env POSTGRES_SUPERUSER)
+PG_SUPER=${PG_SUPER:-postgres}
+PG_SUPER_PASSWORD=$(env_val .env POSTGRES_SUPERUSER_PASSWORD)
 DB_USER=$(env_val .env DB_USER)
 DB_PASSWORD=$(env_val .env DB_PASSWORD)
 DB_NAME=$(env_val .env DB_NAME)
+DB_READER_PASSWORD=$(env_val .env DB_READER_PASSWORD)
+AIRFLOW_DB_PASSWORD=$(env_val .env AIRFLOW_DB_PASSWORD)
+SUPERSET_DB_PASSWORD=$(env_val .env SUPERSET_DB_PASSWORD)
 AIRFLOW_MCP_PASSWORD=$(env_val .env AIRFLOW_MCP_PASSWORD)
-MCP_READER_PASSWORD=$(env_val .env MCP_READER_PASSWORD)
-DBT_MCP_DB_USER=$(env_val .env DBT_MCP_DB_USER)
-DBT_MCP_DB_USER=${DBT_MCP_DB_USER:-mcp_reader}
-SUPERSET_DB_USER=$(env_val docker/.env DATABASE_USER)
-SUPERSET_DB_PASSWORD=$(env_val docker/.env DATABASE_PASSWORD)
-SUPERSET_DB_NAME=$(env_val docker/.env DATABASE_DB)
-# The image's docker-init.sh creates admin with ${ADMIN_PASSWORD:-admin}
 SUPERSET_ADMIN_PASSWORD=$(env_val docker/.env ADMIN_PASSWORD)
 SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
 
@@ -33,29 +34,34 @@ cat <<EOF
 
 Generated $(date '+%Y-%m-%d %H:%M'). Do not commit this file.
 
+## Web UIs
+
 | Platform | URL | Username | Password |
 |---|---|---|---|
 | Airflow | http://localhost:8081 | admin | ${AIRFLOW_PASSWORD} |
 | Superset | http://localhost:8089 | admin | ${SUPERSET_ADMIN_PASSWORD} |
-| Airflow MCP | http://localhost:5009/mcp/ | (logs into Airflow as mcp) | - |
-| Airflow user for the MCP server | http://localhost:8081 | mcp (read-only viewer) | ${AIRFLOW_MCP_PASSWORD} |
-| dbt MCP | http://localhost:5010/mcp | (connects to Postgres as ${DBT_MCP_DB_USER}) | - |
-| Postgres MCP | http://localhost:5011/sse | (connects to Postgres as mcp_reader) | - |
-| Postgres read-only role (dbt + Postgres MCP) | localhost:5000 / db ${DB_NAME} | mcp_reader | ${MCP_READER_PASSWORD} |
-| Superset MCP | http://localhost:5008/mcp | (no auth, localhost only; acts as admin) | - |
-| Postgres (weather data) | localhost:5000 / db ${DB_NAME} | ${DB_USER} | ${DB_PASSWORD} |
 
-## dbt
-dbt has no web UI or login of its own. It connects to Postgres with the
-weather-data credentials above (via \`dbt/profiles.yml\` -> \`DB_*\` in \`.env\`).
+dbt has no web UI or login of its own: it connects to Postgres as ${DB_USER}.
 
-## Connection strings
-- From your machine (DBeaver, psql): \`postgresql://${DB_USER}:${DB_PASSWORD}@localhost:5000/${DB_NAME}\`
-- From Superset "Add database" (inside Docker): \`postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}\`
+## Postgres (localhost:${PG_PORT}, database ${DB_NAME})
 
-## Internal service accounts (metadata databases)
-| Used by | User | Password | Database |
-|---|---|---|---|
-| Airflow metadata | airflow | airflow | airflow_db |
-| Superset metadata | ${SUPERSET_DB_USER} | ${SUPERSET_DB_PASSWORD} | ${SUPERSET_DB_NAME} |
+| Role | Purpose | Password |
+|---|---|---|
+| ${PG_SUPER} | Superuser, administration only | ${PG_SUPER_PASSWORD} |
+| ${DB_USER} | Owns the weather data (ingest, dbt) | ${DB_PASSWORD} |
+| weather_reader | Read-only (Superset charts, dbt and Postgres MCP) | ${DB_READER_PASSWORD} |
+| airflow | Airflow metadata (airflow_db) | ${AIRFLOW_DB_PASSWORD} |
+| superset | Superset metadata (superset_db) | ${SUPERSET_DB_PASSWORD} |
+
+- From your machine (psql, DBeaver): \`postgresql://${DB_USER}:${DB_PASSWORD}@localhost:${PG_PORT}/${DB_NAME}\`
+- Read-only: \`postgresql://weather_reader:${DB_READER_PASSWORD}@localhost:${PG_PORT}/${DB_NAME}\`
+
+## MCP servers (via mcp_gateway, localhost only, no client auth)
+
+| Server | URL | Acts as |
+|---|---|---|
+| Superset | http://localhost:5008/mcp | Superset admin; SQL runs as weather_reader |
+| Airflow | http://localhost:5009/mcp/ | Airflow user mcp (password ${AIRFLOW_MCP_PASSWORD}) |
+| dbt | http://localhost:5010/mcp | Postgres weather_reader (safe mode) |
+| Postgres | http://localhost:5011/sse | Postgres weather_reader, restricted mode |
 EOF

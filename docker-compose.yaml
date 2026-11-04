@@ -1,22 +1,64 @@
+# Weather ELT pipeline: Weatherstack -> Postgres -> dbt (via Airflow) -> Superset,
+# plus MCP servers for AI clients behind mcp_gateway. Create .env and
+# docker/.env first with `make init`. Every port is published on 127.0.0.1 only.
+
+x-dbt-env: &dbt-env
+  HOME: /tmp
+  DBT_PROFILES_DIR: /usr/app
+  DB_HOST: ${DB_HOST:-db}
+  DB_PORT: ${DB_PORT:-5432}
+  DB_NAME: ${DB_NAME:?run make init}
+
+x-superset: &superset
+  build: ./docker
+  image: weather-superset:6.1.0
+  env_file: docker/.env
+  environment: &superset-env
+    DATABASE_PASSWORD: ${SUPERSET_DB_PASSWORD:?run make init}
+    # Connection Superset charts (and its MCP server) use for the weather data: read-only role
+    WEATHER_DB_URI: postgresql://weather_reader:${DB_READER_PASSWORD}@db:5432/${DB_NAME}
+  volumes: &superset-volumes
+    - ./docker/superset_config.py:/app/pythonpath/superset_config.py:ro
+    - ./docker/superset_config_docker.py:/app/pythonpath/superset_config_docker.py:ro
+    - ./docker/superset_setup.py:/app/docker/superset_setup.py:ro
+    - superset_home:/app/superset_home
+  networks:
+    - my_network
+
+x-mcp-healthcheck: &mcp-healthcheck
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
 services:
   db:
     container_name: db
     image: postgres:18.6-bookworm
-    # pg_stat_statements powers the Postgres MCP server's slow-query tools
-    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+    command:
+      - postgres
+      # pg_stat_statements powers the Postgres MCP server's slow-query tools;
+      # track_utility=off keeps statements like ALTER ROLE ... PASSWORD out of it
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track_utility=off
     ports:
-      - 5000:5432
+      - 127.0.0.1:${POSTGRES_HOST_PORT:-5434}:5432
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
-      MCP_READER_PASSWORD: ${MCP_READER_PASSWORD:-}
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?run make init}
+      POSTGRES_DB: ${DB_NAME:?run make init}
+      # Read by postgres/init_roles.sh
+      APP_DB_USER: ${DB_USER:?run make init}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?run make init}
+      AIRFLOW_DB_PASSWORD: ${AIRFLOW_DB_PASSWORD:?run make init}
+      SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:?run make init}
+      READER_DB_PASSWORD: ${DB_READER_PASSWORD:?run make init}
     volumes:
-    - ./postgres/data:/var/lib/postgresql
-    - ./postgres/airflow_init.sql:/docker-entrypoint-initdb.d/airflow_init.sql
-    - ./postgres/superset_init.sql:/docker-entrypoint-initdb.d/superset_init.sql
-    - ./postgres/mcp_reader_init.sh:/docker-entrypoint-initdb.d/mcp_reader_init.sh
+      - pg_data:/var/lib/postgresql
+      - ./postgres/init_roles.sh:/docker-entrypoint-initdb.d/init_roles.sh:ro
     healthcheck:
+      # -h localhost: stays unhealthy while the init scripts run on a fresh volume
       test: ["CMD-SHELL", "pg_isready -h localhost -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
@@ -28,19 +70,35 @@ services:
     container_name: airflow_container
     image: apache/airflow:3.3.2
     ports:
-      - 8081:8080
-    env_file: .env
+      - 127.0.0.1:8081:8080
+    # Only what the DAG and Airflow need (no env_file: keep other secrets out)
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@db:5432/airflow_db
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@db:5432/airflow_db
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?run make init}
       # 'mcp' is the account the airflow_mcp service logs in with (read-only by default)
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "admin:admin,mcp:${AIRFLOW_MCP_ROLE:-viewer}"
+      AIRFLOW_MCP_PASSWORD: ${AIRFLOW_MCP_PASSWORD:?run make init}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      WEATHERSTACK_API_KEY: ${WEATHERSTACK_API_KEY:-}
+      WEATHER_CITY: ${WEATHER_CITY:-New York}
+      USE_MOCK_API: ${USE_MOCK_API:-true}
+      DBT_IMAGE: ${DBT_IMAGE:?run make init}
+      DBT_HOST_PATH: ${DBT_HOST_PATH:?run make init}
+      HOST_UID: ${HOST_UID:-1000}
+      HOST_GID: ${HOST_GID:-1000}
     volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./api-request:/opt/airflow/api-request
+      - ./airflow/dags:/opt/airflow/dags:ro
+      - ./api-request:/opt/airflow/api-request:ro
       - ./airflow/seed_mcp_user.py:/opt/airflow/seed_mcp_user.py:ro
+      # Lets the DockerOperator start dbt containers. Root-equivalent on the host:
+      # anything that can change the DAG code controls the Docker daemon
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
-      - "${DOCKER_GID:-1001}"
+      - "${DOCKER_GID:-0}"
     depends_on:
       db:
         condition: service_healthy
@@ -49,7 +107,74 @@ services:
     command: >
       bash -c "airflow db migrate && python /opt/airflow/seed_mcp_user.py && airflow standalone"
 
-  # MCP server for AI clients to inspect Airflow: http://localhost:5009/mcp/
+  dbt:
+    container_name: dbt_container
+    image: ${DBT_IMAGE:?run make init}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      <<: *dbt-env
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./dbt:/usr/app
+    working_dir: /usr/app/weather
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - my_network
+    # Connection check only; Airflow's DAG runs `dbt build` on schedule
+    command: debug
+
+  redis:
+    container_name: superset_cache
+    image: redis:7.4.12
+    restart: unless-stopped
+    volumes:
+      - redis:/data
+    networks:
+      - my_network
+
+  superset_init:
+    <<: *superset
+    container_name: superset_init
+    command: ["/app/docker/docker-init.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      disable: true
+
+  superset:
+    <<: *superset
+    container_name: superset_app
+    command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:8089:8088
+    depends_on:
+      superset_init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  # ---- MCP servers for AI clients. Not published directly: mcp_gateway exposes them.
+
+  superset_mcp:
+    <<: *superset
+    container_name: superset_mcp
+    command: ["/app/docker/docker-bootstrap.sh", "mcp"]
+    restart: unless-stopped
+    healthcheck:
+      <<: *mcp-healthcheck
+      # The image's default check probes the web app port (8088), not MCP
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:5008/mcp"]
+    depends_on:
+      superset_init:
+        condition: service_completed_successfully
+
   airflow_mcp:
     container_name: airflow_mcp
     build: ./airflow-mcp
@@ -61,188 +186,90 @@ services:
       # --safe = read-only (GET) tools; --unsafe also needs AIRFLOW_MCP_ROLE=op or admin
       AIRFLOW_MCP_MODE: ${AIRFLOW_MCP_MODE:---safe}
     restart: unless-stopped
-    ports:
-      # Localhost only: anyone reaching this port acts as the Airflow mcp user
-      - 127.0.0.1:5009:5009
     healthcheck:
+      <<: *mcp-healthcheck
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 5009), 3)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     depends_on:
-      - af
+      af:
+        condition: service_started
+        # Re-create together so the server logs in again
+        restart: true
     networks:
       - my_network
-  dbt:
-    container_name: dbt_container
-    image: ghcr.io/dbt-labs/dbt-postgres:1.9.latest
-    user: "1000:1000"
-    environment:
-      HOME: /tmp
-      DBT_PROFILES_DIR: /usr/app
-      DB_HOST: ${DB_HOST:-db}
-      DB_PORT: ${DB_PORT:-5432}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-    volumes:
-      - ./dbt:/usr/app
-    working_dir: /usr/app/my_project
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - my_network
-    # Connection check only; Airflow's DAG runs `dbt build` on schedule
-    command: debug
 
-  # MCP server for AI clients to inspect and test the dbt project: http://localhost:5010/mcp
   dbt_mcp:
     container_name: dbt_mcp
     # dbt-core-mcp on the same dbt image Airflow uses, see dbt-mcp/Dockerfile
-    build: ./dbt-mcp
+    build:
+      context: ./dbt-mcp
+      args:
+        DBT_IMAGE: ${DBT_IMAGE:?run make init}
     image: weather-dbt-mcp:1.7.1
-    user: "1000:1000"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
-      HOME: /tmp
-      DBT_PROFILES_DIR: /usr/app
-      DBT_PROJECT_DIR: /usr/app/my_project
-      DB_HOST: ${DB_HOST:-db}
-      DB_PORT: ${DB_PORT:-5432}
-      # Read-only role by default: query_database runs raw SQL. For
-      # DBT_MCP_MODE=full set DBT_MCP_DB_USER/PASSWORD to the DB_USER/DB_PASSWORD values
-      DB_USER: ${DBT_MCP_DB_USER:-mcp_reader}
-      DB_PASSWORD: ${DBT_MCP_DB_PASSWORD:-${MCP_READER_PASSWORD}}
-      DB_NAME: ${DB_NAME}
+      <<: *dbt-env
+      DBT_PROJECT_DIR: /usr/app/weather
+      # Read-only role by default: query_database runs raw SQL
+      DB_USER: ${DBT_MCP_DB_USER:-weather_reader}
+      DB_PASSWORD: ${DBT_MCP_DB_PASSWORD:-${DB_READER_PASSWORD}}
       # safe = inspect, lineage, query and test; full = also build/run/seed models
       DBT_MCP_MODE: ${DBT_MCP_MODE:-safe}
     volumes:
-      - ./dbt:/usr/app
+      # Read-only: tools such as query_database(output_file=...) must not be able
+      # to write models or macros that Airflow's dbt build would then execute
+      - ./dbt:/usr/app:ro
       # dbt-core-mcp ignores DBT_PROFILES_DIR: it only reads profiles.yml from
       # the project dir or ~/.dbt (HOME=/tmp), so expose the shared one there
       - ./dbt/profiles.yml:/tmp/.dbt/profiles.yml:ro
-    # Private target/ and logs/ so MCP-triggered dbt commands never collide
-    # with the artifacts of Airflow's scheduled `dbt build`
+    # Private target/ and logs/ (mount points created by make init): MCP-triggered
+    # dbt commands never touch the artifacts of Airflow's scheduled dbt build
     tmpfs:
-      - /usr/app/my_project/target:uid=1000,gid=1000
-      - /usr/app/my_project/logs:uid=1000,gid=1000
-    working_dir: /usr/app/my_project
+      - /usr/app/weather/target:uid=${HOST_UID:-1000},gid=${HOST_GID:-1000}
+      - /usr/app/weather/logs:uid=${HOST_UID:-1000},gid=${HOST_GID:-1000}
+    working_dir: /usr/app/weather
     restart: unless-stopped
-    ports:
-      # Localhost only: no client auth
-      - 127.0.0.1:5010:5010
     healthcheck:
+      <<: *mcp-healthcheck
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 5010), 3)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     depends_on:
       db:
         condition: service_healthy
     networks:
       - my_network
 
-  # MCP server for AI clients to explore and tune Postgres: http://localhost:5011/sse
   postgres_mcp:
     container_name: postgres_mcp
     image: crystaldba/postgres-mcp:0.3.0
     user: "1000:1000"
     environment:
-      # Two layers: the mcp_reader role is SELECT-only with read-only sessions,
-      # and restricted mode rejects non-read-only SQL before it is sent
-      DATABASE_URI: postgresql://mcp_reader:${MCP_READER_PASSWORD}@db:5432/${DB_NAME}
+      # Two layers: weather_reader is SELECT-only, and restricted mode rejects
+      # non-read-only SQL before it is sent
+      DATABASE_URI: postgresql://weather_reader:${DB_READER_PASSWORD}@db:5432/${DB_NAME}
     command: ["--access-mode=restricted", "--transport=sse", "--sse-host=0.0.0.0", "--sse-port=8000"]
     restart: unless-stopped
-    ports:
-      # Localhost only: no client auth
-      - 127.0.0.1:5011:8000
     healthcheck:
+      <<: *mcp-healthcheck
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), 3)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     depends_on:
       db:
         condition: service_healthy
     networks:
       - my_network
 
-  redis:
-    container_name: superset_cache
-    image: redis:7
-    restart: unless-stopped
+  # Single entry point for the MCP servers. Rejects requests whose Host is not
+  # localhost/127.0.0.1 or whose Origin is a foreign web page (DNS rebinding)
+  mcp_gateway:
+    container_name: mcp_gateway
+    image: nginx:1.30.6-alpine
     volumes:
-      - redis:/data
-    networks:
-      - my_network
-
-  superset_init:
-    container_name: superset_init
-    # Superset 6.1 + psycopg2 + fastmcp, see docker/Dockerfile
-    build: ./docker
-    image: weather-superset:6.1.0
-    command: ["/app/docker/docker-init.sh"]
-    env_file: docker/.env
-    environment:
-      DATABASE_DB: superset_db
-    volumes: &superset-volumes
-      - ./docker/superset_config.py:/app/pythonpath/superset_config.py
-      - ./docker/superset_config_docker.py:/app/pythonpath/superset_config_docker.py
-      - ./docker/superset_setup.py:/app/docker/superset_setup.py
-      - superset_home:/app/superset_home
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    healthcheck:
-      disable: true
-    networks:
-      - my_network
-
-  superset:
-    container_name: superset_app
-    build: ./docker
-    image: weather-superset:6.1.0
-    command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
-    env_file: docker/.env
-    environment:
-      DATABASE_DB: superset_db
-    restart: unless-stopped
+      - ./mcp-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./mcp-gateway/mcp_guard.conf:/etc/nginx/mcp_guard.conf:ro
     ports:
-      - 8089:8088
-    volumes: *superset-volumes
-    depends_on:
-      superset_init:
-        condition: service_completed_successfully
-      redis:
-        condition: service_started
-    networks:
-      - my_network
-
-  # MCP server for AI clients (Claude Code, Claude Desktop...): http://localhost:5008/mcp
-  superset_mcp:
-    container_name: superset_mcp
-    build: ./docker
-    image: weather-superset:6.1.0
-    command: ["/app/docker/docker-bootstrap.sh", "mcp"]
-    env_file: docker/.env
-    environment:
-      DATABASE_DB: superset_db
+      - 127.0.0.1:5008:5008  # Superset MCP  /mcp
+      - 127.0.0.1:5009:5009  # Airflow MCP   /mcp/
+      - 127.0.0.1:5010:5010  # dbt MCP       /mcp
+      - 127.0.0.1:5011:5011  # Postgres MCP  /sse
     restart: unless-stopped
-    ports:
-      # Localhost only: MCP auth is disabled for local development
-      - 127.0.0.1:5008:5008
-    healthcheck:
-      # The image's default check probes the web app port (8088), not MCP
-      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:5008/mcp"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    volumes: *superset-volumes
-    depends_on:
-      superset_init:
-        condition: service_completed_successfully
     networks:
       - my_network
 
@@ -252,5 +279,6 @@ networks:
     driver: bridge
 
 volumes:
+  pg_data:
   redis:
   superset_home:

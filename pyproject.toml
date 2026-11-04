@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Upstream template copied unmodified from apache/superset 6.1.0
+extend-exclude = ["docker/superset_config.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["api_request", "insert_records", "seed_test_data"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

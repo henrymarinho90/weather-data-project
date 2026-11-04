@@ -5,12 +5,14 @@ The simple auth manager keeps passwords already present in its passwords file
 and only generates the missing ones, so seeding it before `airflow standalone`
 makes the mcp password predictable while admin's stays randomly generated.
 """
+
 import json
 import os
 
 password = os.getenv("AIRFLOW_MCP_PASSWORD")
-path = os.path.join(os.getenv("AIRFLOW_HOME", "/opt/airflow"),
-                    "simple_auth_manager_passwords.json.generated")
+path = os.path.join(
+    os.getenv("AIRFLOW_HOME", "/opt/airflow"), "simple_auth_manager_passwords.json.generated"
+)
 
 if password:
     passwords = {}

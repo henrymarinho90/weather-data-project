@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: weather
+    description: "Raw weather data loaded by the ingest job."
+    schema: dev
+    tables:
+      - name: raw_weather_data
+        description: "One row per Weatherstack API call. The same observation can appear repeatedly (free tier / mock mode)."
+        # inserted_at is always now(), so freshness is measured on observation time (UTC).
+        loaded_at_field: "(time - (utc_offset || ' hours')::interval)"
+        freshness:
+          warn_after: {count: 13, period: hour}
+          error_after: {count: 25, period: hour}
+        columns:
+          - name: id
+            description: "Surrogate key (serial), one per API call."
+          - name: city
+            description: "City name requested from the API."
+          - name: temperature
+            description: "Temperature in degrees Celsius (°C)."
+          - name: weather_description
+            description: "Text description of the weather conditions."
+          - name: wind_speed
+            description: "Wind speed in kilometres per hour (km/h)."
+          - name: time
+            description: "Observation time as local wall-clock time of the city (Weatherstack location.localtime)."
+          - name: inserted_at
+            description: "Timestamp (UTC, DB default now()) when the row was inserted."
+          - name: utc_offset
+            description: "UTC offset of the city in hours, stored as text (e.g. '-4.0')."

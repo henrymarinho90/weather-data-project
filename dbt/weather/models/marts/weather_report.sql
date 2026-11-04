@@ -1,10 +1,8 @@
-{{ config(
-    materialized='table'
-)}}
 select
     city,
     temperature,
     weather_description,
     wind_speed,
-    weather_time_local
+    observed_at_local,
+    observed_at_utc
 from {{ ref('stg_weather_data') }}

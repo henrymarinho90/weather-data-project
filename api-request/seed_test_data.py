@@ -1,14 +1,17 @@
 """Populate dev.raw_weather_data with synthetic history for testing/dashboards.
 
-Generates two observations per day (08:00 and 20:00 local time, matching the
-DAG's twice-daily cadence) for the last N days, without calling the API.
+Generates two observations per day for the last N days, without calling the API.
+Observations are at 08:00 and 20:00 New York local time. Note the DAG itself runs
+at 08:00 and 20:00 UTC, so this mirrors its twice-daily cadence, not its clock times.
+Re-running is idempotent: rows whose (city, time) already exist are skipped.
 
 Run inside the Airflow container:
     docker exec airflow_container python /opt/airflow/api-request/seed_test_data.py --days 30
 """
+
 import argparse
 import random
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from insert_records import connect_to_db, create_table
@@ -17,6 +20,17 @@ CITY = "New York"
 TZ = ZoneInfo("America/New_York")
 DESCRIPTIONS = ["Sunny", "Clear", "Partly cloudy", "Overcast", "Light rain", "Mist"]
 WEIGHTS = [25, 20, 25, 15, 10, 5]
+
+INSERT_IF_MISSING = """
+    INSERT INTO dev.raw_weather_data(
+        city, temperature, weather_description, wind_speed,
+        time, inserted_at, utc_offset
+    )
+    SELECT %s, %s, %s, %s, %s, %s, %s
+    WHERE NOT EXISTS (
+        SELECT 1 FROM dev.raw_weather_data WHERE city = %s AND time = %s
+    )
+"""
 
 
 def generate_rows(days, rng):
@@ -34,7 +48,7 @@ def generate_rows(days, rng):
                 rng.choices(DESCRIPTIONS, WEIGHTS)[0],
                 rng.randint(5, 30),
                 local.replace(tzinfo=None),
-                local.astimezone(timezone.utc).replace(tzinfo=None),
+                local.astimezone(UTC).replace(tzinfo=None),
                 f"{offset_hours:.1f}",
             )
 
@@ -49,15 +63,16 @@ def main():
     conn = connect_to_db()
     try:
         create_table(conn)
+        inserted = 0
         with conn.cursor() as cursor:
-            cursor.executemany("""
-                INSERT INTO dev.raw_weather_data(
-                    city, temperature, weather_description, wind_speed,
-                    time, inserted_at, utc_offset
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, rows)
+            for row in rows:
+                cursor.execute(INSERT_IF_MISSING, (*row, row[0], row[4]))
+                inserted += cursor.rowcount
         conn.commit()
-        print(f"Inserted {len(rows)} test rows for {CITY} ({args.days} days).")
+        print(
+            f"Inserted {inserted} new test rows for {CITY} "
+            f"({len(rows) - inserted} already existed, {args.days} days)."
+        )
     finally:
         conn.close()
 

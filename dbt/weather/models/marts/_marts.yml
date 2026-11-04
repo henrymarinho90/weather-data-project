@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: weather_report
+    description: >
+      Observation-level reporting table consumed by Superset. It exists as a
+      stable reporting interface over staging: BI columns stay fixed even if
+      staging internals (ids, load metadata, dedup logic) change.
+    columns:
+      - name: city
+        description: "City name."
+        data_tests:
+          - not_null
+      - name: temperature
+        description: "Temperature in degrees Celsius (°C)."
+      - name: weather_description
+        description: "Text description of the weather conditions."
+      - name: wind_speed
+        description: "Wind speed in kilometres per hour (km/h)."
+      - name: observed_at_local
+        description: "Observation time, local wall-clock time of the city."
+        data_tests:
+          - not_null
+      - name: observed_at_utc
+        description: "Observation time in UTC."
+        data_tests:
+          - not_null
+
+  - name: daily_average
+    description: "Daily temperature and wind statistics per city, by local calendar date."
+    columns:
+      - name: city
+        description: "City name."
+        data_tests:
+          - not_null
+      - name: date
+        description: "Local calendar date of the observations."
+        data_tests:
+          - not_null
+      - name: n_observations
+        description: "Number of distinct observations on that day."
+      - name: avg_temperature
+        description: "Average temperature in °C, rounded to 2 decimals."
+      - name: min_temperature
+        description: "Minimum temperature in °C."
+      - name: max_temperature
+        description: "Maximum temperature in °C."
+      - name: avg_wind_speed
+        description: "Average wind speed in km/h, rounded to 2 decimals."

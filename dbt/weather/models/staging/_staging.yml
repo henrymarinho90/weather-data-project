@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: stg_weather_data
+    description: >
+      Cleaned raw weather observations, deduplicated to one row per city and
+      UTC observation time (earliest loaded row kept).
+    columns:
+      - name: id
+        description: "Surrogate key of the raw row that was kept."
+        data_tests:
+          - not_null
+      - name: city
+        description: "City name."
+        data_tests:
+          - not_null
+      - name: temperature
+        description: "Temperature in degrees Celsius (°C)."
+      - name: weather_description
+        description: "Text description of the weather conditions."
+      - name: wind_speed
+        description: "Wind speed in kilometres per hour (km/h)."
+      - name: observed_at_local
+        description: "Observation time, local wall-clock time of the city."
+        data_tests:
+          - not_null
+      - name: observed_at_utc
+        description: "Observation time in UTC (observed_at_local minus utc_offset_hours)."
+        data_tests:
+          - not_null
+      - name: utc_offset_hours
+        description: "UTC offset of the city in hours."
+        data_tests:
+          - accepted_values:
+              values: [-4, -5]
+              quote: false
+              config:
+                severity: warn
+      - name: loaded_at_utc
+        description: "Timestamp (UTC) when the raw row was inserted."
+
+unit_tests:
+  - name: stg_weather_data_dedups_same_observation
+    description: "Two raw rows with the same city and UTC observation time collapse to one, keeping the earliest loaded_at_utc."
+    model: stg_weather_data
+    given:
+      - input: source('weather', 'raw_weather_data')
+        rows:
+          - {id: 1, city: 'New York', temperature: 20, weather_description: 'Sunny', wind_speed: 10, time: '2025-01-01 08:00:00', inserted_at: '2025-01-01 12:30:00', utc_offset: '-4.0'}
+          - {id: 2, city: 'New York', temperature: 20, weather_description: 'Sunny', wind_speed: 10, time: '2025-01-01 08:00:00', inserted_at: '2025-01-01 12:10:00', utc_offset: '-4.0'}
+          - {id: 3, city: 'Chicago', temperature: 5, weather_description: 'Cloudy', wind_speed: 20, time: '2025-01-01 07:00:00', inserted_at: '2025-01-01 12:15:00', utc_offset: '-5.0'}
+    expect:
+      rows:
+        - {id: 2, city: 'New York', temperature: 20, weather_description: 'Sunny', wind_speed: 10, observed_at_local: '2025-01-01 08:00:00', observed_at_utc: '2025-01-01 12:00:00', utc_offset_hours: -4.0, loaded_at_utc: '2025-01-01 12:10:00'}
+        - {id: 3, city: 'Chicago', temperature: 5, weather_description: 'Cloudy', wind_speed: 20, observed_at_local: '2025-01-01 07:00:00', observed_at_utc: '2025-01-01 12:00:00', utc_offset_hours: -5.0, loaded_at_utc: '2025-01-01 12:15:00'}

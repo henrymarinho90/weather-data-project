@@ -4,11 +4,12 @@ dbt-core-mcp only ships a stdio entrypoint (the client spawns it). Running it
 over HTTP lets it live in the compose stack next to the Superset and Airflow
 MCP servers, on the project network, with the same dbt image as Airflow.
 """
+
 import os
 
 from dbt_core_mcp.server import create_server
 
-PROJECT_DIR = os.getenv("DBT_PROJECT_DIR", "/usr/app/my_project")
+PROJECT_DIR = os.getenv("DBT_PROJECT_DIR", "/usr/app/weather")
 PORT = int(os.getenv("MCP_PORT", "5010"))
 # safe (default): inspect, lineage, query and test only. full: also build/run/seed.
 MODE = os.getenv("DBT_MCP_MODE", "safe")

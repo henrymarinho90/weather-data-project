@@ -1,6 +1,8 @@
 # dbt-core-mcp (https://github.com/NiclasOlofsson/dbt-core-mcp) on the same dbt
 # image Airflow uses, so the MCP server drives the exact same dbt + adapter.
-FROM ghcr.io/dbt-labs/dbt-postgres:1.9.latest
+# Passed from DBT_IMAGE in .env by docker-compose
+ARG DBT_IMAGE=ghcr.io/dbt-labs/dbt-postgres:1.9.0
+FROM ${DBT_IMAGE}
 
 # dbt-core-mcp runs dbt with its own interpreter (sys.executable), so it must
 # share dbt's Python. Pins come from dbt-core-mcp 1.7.1's uv.lock; `pip check`
