@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: stg_weather_data
+    description: "Deduplicated weather observations per city and time, built from the raw source."
+    columns:
+      - name: id
+        description: "Source row identifier."
+        data_tests:
+          - unique
+          - not_null
+      - name: city
+        description: "City the observation belongs to."
+        data_tests:
+          - not_null
+      - name: weather_time_local
+        description: "Observation time (local)."
+        data_tests:
+          - not_null
+
+  - name: daily_average
+    description: "Average temperature and wind speed per city and day."
+    columns:
+      - name: city
+        description: "City."
+        data_tests:
+          - not_null
+      - name: date
+        description: "Calendar date of the observations."
+        data_tests:
+          - not_null
+
+  - name: weather_report
+    description: "Weather observations per city and time for reporting."
+    columns:
+      - name: city
+        description: "City."
+        data_tests:
+          - not_null
+      - name: weather_time_local
+        description: "Observation time (local)."
+        data_tests:
+          - not_null
