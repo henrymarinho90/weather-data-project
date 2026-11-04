@@ -10,3 +10,4 @@ logs/
 superset_home/
 docker/.env
 credentials.local.md
+backups/

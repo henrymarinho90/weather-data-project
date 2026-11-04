@@ -27,3 +27,54 @@ jobs:
       - run: docker compose config -q
       - name: dbt parse (no database needed)
         run: docker compose run --rm --no-deps dbt parse
+
+  # Vulnerable dependencies, committed secrets and Dockerfile/compose misconfigurations.
+  # Runs the pinned Trivy image directly instead of a third-party action.
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy (fails on fixable HIGH/CRITICAL findings)
+        run: >
+          docker run --rm -v "$PWD:/src:ro" aquasec/trivy:0.76.1 fs
+          --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --ignore-unfixed
+          --exit-code 1 /src
+
+  # End to end: Postgres + Airflow, the whole DAG in mock mode (ingest -> dbt build ->
+  # source freshness), then a backup and a restore test
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate env files (USE_MOCK_API=true by default)
+        run: ./scripts/init_env.sh
+      - name: Start Postgres and Airflow
+        run: |
+          docker pull "$(grep '^DBT_IMAGE=' .env | cut -d= -f2)"
+          docker compose up -d db af
+      - name: Wait for Airflow to load the DAG
+        run: |
+          for i in $(seq 1 60); do
+            docker exec airflow_container airflow dags list 2>/dev/null | grep -q api-dbt-orchestrator && break
+            sleep 10
+          done
+          docker exec airflow_container airflow dags list-import-errors
+      - name: Run the DAG
+        run: |
+          docker exec airflow_container airflow dags test api-dbt-orchestrator | tee dag-test.log
+          grep -q "DagRun Finished:.*state=success" dag-test.log
+      - name: Check the marts have data
+        run: |
+          rows=$(docker exec db psql -U postgres -d "$(grep '^DB_NAME=' .env | cut -d= -f2)" -tAc \
+            "select count(*) from dev.weather_report")
+          echo "weather_report rows: $rows"
+          [ "$rows" -ge 1 ]
+      - name: Backup and restore test
+        run: |
+          docker compose up -d db_backup
+          for i in $(seq 1 30); do docker logs db_backup 2>&1 | grep -q "backup written" && break; sleep 2; done
+          docker exec db_backup /opt/backup/verify.sh
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail=200 db af db_backup

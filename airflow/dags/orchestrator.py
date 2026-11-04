@@ -9,6 +9,8 @@ from docker.types import Mount
 
 sys.path.append("/opt/airflow/api-request")
 
+from alerting import notify_failure  # noqa: E402
+
 
 def ingest_weather_data():
     from insert_records import main
@@ -57,6 +59,8 @@ with DAG(
         "retry_delay": timedelta(minutes=2),
         # A hung API or dbt run must not block every later run (max_active_runs=1)
         "execution_timeout": timedelta(minutes=10),
+        # Webhook alert once a task has failed for good (ALERT_WEBHOOK_URL in .env)
+        "on_failure_callback": notify_failure,
     },
 ) as dag:
     ingest = PythonOperator(

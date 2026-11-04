@@ -33,6 +33,10 @@ x-mcp-healthcheck: &mcp-healthcheck
 services:
   db:
     container_name: db
+    deploy:
+      resources:
+        limits: {memory: 1g, cpus: "2"}
+    restart: unless-stopped
     image: postgres:18.6-bookworm
     command:
       - postgres
@@ -66,8 +70,40 @@ services:
     networks:
       - my_network
 
+  # Nightly pg_dump of all project databases into ./backups (keeps 7 days).
+  # make backup = run now, make backup-verify = restore test
+  db_backup:
+    container_name: db_backup
+    image: postgres:18.6-bookworm
+    deploy:
+      resources:
+        limits: {memory: 256m, cpus: "0.5"}
+    restart: unless-stopped
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    entrypoint: ["/opt/backup/backup.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_SUPERUSER:-postgres}
+      PGPASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?run make init}
+      DB_NAME: ${DB_NAME}
+      DATABASES: ${DB_NAME} airflow_db superset_db
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+      BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-2}
+    volumes:
+      - ./backup:/opt/backup:ro
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - my_network
+
   af:
     container_name: airflow_container
+    deploy:
+      resources:
+        limits: {memory: 3g, cpus: "2"}
+    restart: unless-stopped
     image: apache/airflow:3.3.2
     ports:
       - 127.0.0.1:8081:8080
@@ -86,6 +122,7 @@ services:
       WEATHERSTACK_API_KEY: ${WEATHERSTACK_API_KEY:-}
       WEATHER_CITY: ${WEATHER_CITY:-New York}
       USE_MOCK_API: ${USE_MOCK_API:-true}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       DBT_IMAGE: ${DBT_IMAGE:?run make init}
       DBT_HOST_PATH: ${DBT_HOST_PATH:?run make init}
       HOST_UID: ${HOST_UID:-1000}
@@ -109,6 +146,9 @@ services:
 
   dbt:
     container_name: dbt_container
+    deploy:
+      resources:
+        limits: {memory: 1g, cpus: "1"}
     image: ${DBT_IMAGE:?run make init}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
@@ -128,6 +168,9 @@ services:
 
   redis:
     container_name: superset_cache
+    deploy:
+      resources:
+        limits: {memory: 256m, cpus: "0.5"}
     image: redis:7.4.12
     restart: unless-stopped
     volumes:
@@ -138,6 +181,9 @@ services:
   superset_init:
     <<: *superset
     container_name: superset_init
+    deploy:
+      resources:
+        limits: {memory: 1g, cpus: "1"}
     command: ["/app/docker/docker-init.sh"]
     depends_on:
       db:
@@ -150,6 +196,9 @@ services:
   superset:
     <<: *superset
     container_name: superset_app
+    deploy:
+      resources:
+        limits: {memory: 1g, cpus: "1"}
     command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
     restart: unless-stopped
     ports:
@@ -165,6 +214,9 @@ services:
   superset_mcp:
     <<: *superset
     container_name: superset_mcp
+    deploy:
+      resources:
+        limits: {memory: 768m, cpus: "1"}
     command: ["/app/docker/docker-bootstrap.sh", "mcp"]
     restart: unless-stopped
     healthcheck:
@@ -177,6 +229,9 @@ services:
 
   airflow_mcp:
     container_name: airflow_mcp
+    deploy:
+      resources:
+        limits: {memory: 256m, cpus: "0.5"}
     build: ./airflow-mcp
     image: weather-airflow-mcp:0.9.1
     environment:
@@ -199,6 +254,9 @@ services:
 
   dbt_mcp:
     container_name: dbt_mcp
+    deploy:
+      resources:
+        limits: {memory: 768m, cpus: "1"}
     # dbt-core-mcp on the same dbt image Airflow uses, see dbt-mcp/Dockerfile
     build:
       context: ./dbt-mcp
@@ -239,6 +297,9 @@ services:
 
   postgres_mcp:
     container_name: postgres_mcp
+    deploy:
+      resources:
+        limits: {memory: 384m, cpus: "0.5"}
     image: crystaldba/postgres-mcp:0.3.0
     user: "1000:1000"
     environment:
@@ -260,6 +321,9 @@ services:
   # (no create, start, stop, exec, delete). Reachable only on the private docker_api network
   docker_proxy:
     container_name: docker_proxy
+    deploy:
+      resources:
+        limits: {memory: 64m, cpus: "0.25"}
     image: tecnativa/docker-socket-proxy:v0.5.0
     environment:
       CONTAINERS: 1
@@ -273,6 +337,9 @@ services:
 
   docker_mcp:
     container_name: docker_mcp
+    deploy:
+      resources:
+        limits: {memory: 256m, cpus: "0.5"}
     # Project-scoped, read-only Docker tools; see docker-mcp/server.py
     build: ./docker-mcp
     image: weather-docker-mcp:1.0.0
@@ -292,6 +359,9 @@ services:
   # localhost/127.0.0.1 or whose Origin is a foreign web page (DNS rebinding)
   mcp_gateway:
     container_name: mcp_gateway
+    deploy:
+      resources:
+        limits: {memory: 64m, cpus: "0.25"}
     image: nginx:1.30.6-alpine
     volumes:
       - ./mcp-gateway/nginx.conf:/etc/nginx/nginx.conf:ro

@@ -1,0 +1,29 @@
+# Weekly, grouped dependency updates. Major versions of mcp/fastmcp are ignored:
+# airflow-mcp-server 0.9.1 breaks on mcp 2.x and Superset 6.1 requires fastmcp < 4.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      actions: {patterns: ["*"]}
+
+  - package-ecosystem: pip
+    directories: [/, /docker-mcp, /airflow-mcp]
+    schedule: {interval: weekly}
+    ignore:
+      - dependency-name: mcp
+        update-types: [version-update:semver-major]
+      - dependency-name: fastmcp
+        update-types: [version-update:semver-major]
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: [/docker, /docker-mcp, /airflow-mcp, /dbt-mcp]
+    schedule: {interval: weekly}
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule: {interval: weekly}

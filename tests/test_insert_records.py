@@ -1,9 +1,11 @@
+from datetime import UTC, datetime
+
 from api_request import mock_fetch_data
 from insert_records import build_record
 
 
 def test_build_record_maps_fields():
-    data = mock_fetch_data()
+    data = mock_fetch_data(datetime(2026, 10, 21, 0, 13, tzinfo=UTC))
     assert build_record(data) == (
         "New York",
         16,

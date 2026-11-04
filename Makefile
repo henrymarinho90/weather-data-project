@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help init up down ps logs seed superset-setup creds dbt-build lint test
+.PHONY: help init up down ps logs seed superset-setup creds dbt-build backup backup-verify restore lint test
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -30,6 +30,15 @@ creds: ## Show generated credentials
 
 dbt-build: ## Run dbt build
 	docker compose run --rm dbt build
+
+backup: ## Back up all databases now (into ./backups)
+	docker exec db_backup /opt/backup/backup.sh once
+
+backup-verify: ## Restore the newest backup into a scratch DB and compare row counts
+	docker exec db_backup /opt/backup/verify.sh
+
+restore: ## Restore a database: make restore RUN=backups/<timestamp> [DB=name]
+	./scripts/restore_backup.sh $(RUN) $(DB)
 
 lint: ## Run ruff
 	ruff check . && ruff format --check .

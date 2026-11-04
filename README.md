@@ -80,8 +80,8 @@ All ports are published on `127.0.0.1` only.
 
 ## Using it
 
-1. **Data source:** `USE_MOCK_API` in `.env`. `true` (default) uses a built-in sample response with a fixed timestamp, so the freshness check fails by design; `false` calls Weatherstack for `WEATHER_CITY`. The twice-daily schedule uses about 60 API calls a month, and each manual trigger one more. Apply `.env` changes with `make up`.
-2. **DAG** `api-dbt-orchestrator`: `ingest_weather_data` → `transform_data_task` (`dbt build`: models plus tests) → `check_source_freshness` (fails if the newest observation is over 25 h old). Tasks retry once and time out after 10 minutes.
+1. **Data source:** `USE_MOCK_API` in `.env`. `true` (default) uses a built-in sample response stamped with the current New York time (fixed weather values, no API calls); `false` calls Weatherstack for `WEATHER_CITY`. The twice-daily schedule uses about 60 API calls a month, and each manual trigger one more. Apply `.env` changes with `make up`.
+2. **DAG** `api-dbt-orchestrator`: `ingest_weather_data` → `transform_data_task` (`dbt build`: models plus tests) → `check_source_freshness` (fails if the newest observation is over 25 h old). Tasks retry once and time out after 10 minutes. When a task fails for good, `airflow/dags/alerting.py` posts to `ALERT_WEBHOOK_URL` (Slack or Discord incoming webhook) if set, otherwise it only logs.
 3. **Dashboard:** `make superset-setup` creates the read-only `weather_db` connection, datasets for `weather_report` and `daily_average`, three charts and a **Weather Dashboard** (http://localhost:8089/superset/dashboard/weather/) that refreshes every 5 minutes. Re-running it updates everything in place.
 
 ## dbt models
@@ -112,6 +112,17 @@ Example prompts: *"Is the whole stack healthy? Show the last errors in the Airfl
 
 **Allowing writes** (an AI client can then change data or, via Airflow triggers, spend API calls): Airflow `AIRFLOW_MCP_ROLE=op` + `AIRFLOW_MCP_MODE=--unsafe`; dbt `DBT_MCP_MODE=full` + `DBT_MCP_DB_USER`/`DBT_MCP_DB_PASSWORD` set to the `DB_USER`/`DB_PASSWORD` values. Then `make up`.
 
+## Operations
+
+- **Restarts and limits:** every long-running service restarts unless stopped and has memory/CPU limits (`deploy.resources.limits`); one-shot jobs (`dbt`, `superset_init`) do not restart.
+- **Backups:** `db_backup` writes `pg_dump` files of `db`, `airflow_db` and `superset_db` plus the roles (`globals.sql`) to `./backups/<UTC timestamp>/` every day at `BACKUP_HOUR_UTC` (and on start if the newest backup is over 24 h old), keeping `BACKUP_KEEP_DAYS` days. Files are `chmod 600`; `globals.sql` contains password hashes. `./backups` is on the same machine, so copy it elsewhere for real disaster recovery.
+  ```bash
+  make backup          # back up now
+  make backup-verify   # restore the newest dump into a scratch DB and compare row counts
+  make restore RUN=backups/20261105T020000Z DB=db   # replace a database (asks for confirmation)
+  ```
+- **Alerts:** set `ALERT_WEBHOOK_URL` in `.env` and run `make up`.
+
 ## Database roles
 
 `postgres/init_roles.sh` creates them on a fresh volume (re-apply after changing passwords with `docker exec db bash /docker-entrypoint-initdb.d/init_roles.sh`):
@@ -134,7 +145,14 @@ make test     # pytest: ingest mapping, API client, test-data generator (no DB o
 make dbt-build
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff and pytest, generates env files with `scripts/init_env.sh`, validates `docker compose config` and runs `dbt parse`.
+CI (`.github/workflows/ci.yml`) has four jobs:
+
+- **python:** ruff and pytest.
+- **compose-and-dbt:** generates env files with `scripts/init_env.sh`, validates `docker compose config`, runs `dbt parse`.
+- **security-scan:** Trivy on the repository (dependency vulnerabilities, committed secrets, Dockerfile/compose misconfigurations); fails on fixable HIGH/CRITICAL findings.
+- **integration:** starts Postgres and Airflow, runs the whole DAG in mock mode, checks the marts have data, then takes a backup and runs the restore test.
+
+Dependabot (`.github/dependabot.yml`) opens weekly grouped updates for actions, Python requirements, Dockerfiles and compose images; major versions of `mcp`/`fastmcp` are ignored because they break the MCP servers.
 
 ## Project structure
 
@@ -145,8 +163,10 @@ weather-data-project/
 ├── .mcp.json             # MCP servers for Claude Code
 ├── airflow/
 │   ├── dags/orchestrator.py   # the api-dbt-orchestrator DAG
+│   ├── dags/alerting.py       # failure webhook alerts
 │   └── seed_mcp_user.py       # sets the Airflow 'mcp' user's password
 ├── airflow-mcp/          # Airflow MCP image: Dockerfile, locked requirements, token-refresh entrypoint
+├── backup/               # backup.sh (db_backup service), verify.sh (restore test)
 ├── api-request/          # api_request.py (API client), insert_records.py (load), seed_test_data.py
 ├── dbt/
 │   ├── profiles.yml      # connection profile (env vars)
@@ -156,7 +176,7 @@ weather-data-project/
 ├── docker/               # Superset: Dockerfile, env template, config, superset_setup.py
 ├── mcp-gateway/          # nginx config for the MCP gateway
 ├── postgres/init_roles.sh
-├── scripts/              # init_env.sh, show_credentials.sh
+├── scripts/              # init_env.sh, show_credentials.sh, restore_backup.sh
 └── tests/                # pytest unit tests
 ```
 
@@ -178,4 +198,4 @@ weather-data-project/
 - **`superset_init` fails**: `docker logs superset_init`.
 - **`superset_setup.py` login fails** after changing the admin password in the UI: `docker exec -e SUPERSET_ADMIN_PASSWORD=... superset_app python /app/docker/superset_setup.py`.
 - **MCP client cannot connect**: `docker compose ps` (each MCP container should be healthy) and `docker logs <container>`. If `airflow_mcp` keeps printing `Waiting for Airflow login`, Airflow is still starting.
-- **`check_source_freshness` fails**: expected in mock mode or when the API keeps returning a cached observation; check `USE_MOCK_API` and the latest `observed_at_utc`.
+- **`check_source_freshness` fails**: the newest observation is over 25 h old, e.g. the DAG was paused or the API keeps returning a cached observation; check the latest `observed_at_utc`.

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 import requests
 
@@ -20,7 +22,7 @@ class FakeResponse:
 def test_mock_fetch_data_shape():
     data = api_request.mock_fetch_data()
     assert data["location"]["name"] == "New York"
-    assert data["location"]["utc_offset"] == "-4.0"
+    assert data["location"]["utc_offset"] in ("-4.0", "-5.0")
     assert isinstance(data["current"]["temperature"], int)
     assert data["current"]["weather_descriptions"]
 
@@ -60,3 +62,12 @@ def test_fetch_data_propagates_http_error(monkeypatch):
     monkeypatch.setattr(api_request.requests, "get", lambda *a, **kw: FakeResponse({}, 500))
     with pytest.raises(requests.exceptions.HTTPError):
         api_request.fetch_data()
+
+
+def test_mock_fetch_data_uses_current_new_york_time_across_dst():
+    summer = api_request.mock_fetch_data(datetime(2026, 10, 20, 0, 13, tzinfo=UTC))
+    assert summer["location"]["localtime"] == "2026-10-19 20:13"
+    assert summer["location"]["utc_offset"] == "-4.0"
+    winter = api_request.mock_fetch_data(datetime(2026, 11, 5, 13, 0, tzinfo=UTC))
+    assert winter["location"]["localtime"] == "2026-11-05 08:00"
+    assert winter["location"]["utc_offset"] == "-5.0"

@@ -62,3 +62,5 @@ PY
 # dbt_mcp mounts ./dbt read-only with private tmpfs target/ and logs/; their
 # mount points must exist on the host
 mkdir -p dbt/weather/target dbt/weather/logs
+# Owned by you (db_backup runs as HOST_UID), not created as root by Docker
+mkdir -p backups

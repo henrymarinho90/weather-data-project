@@ -1,5 +1,7 @@
 import logging
 import os
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -33,7 +35,15 @@ def fetch_data():
     return data
 
 
-def mock_fetch_data():
+def mock_fetch_data(now=None):
+    """Sample Weatherstack response stamped with the current New York time.
+
+    The weather values are fixed, but each call is a new observation, so mock
+    runs keep the pipeline (and its source freshness check) realistic without
+    spending API calls. `now` (an aware datetime) makes it deterministic in tests.
+    """
+    local = (now or datetime.now(UTC)).astimezone(ZoneInfo("America/New_York"))
+    offset_hours = local.utcoffset().total_seconds() / 3600
     return {
         "request": {
             "type": "City",
@@ -48,9 +58,9 @@ def mock_fetch_data():
             "lat": "40.714",
             "lon": "-74.006",
             "timezone_id": "America/New_York",
-            "localtime": "2026-10-20 20:13",
-            "localtime_epoch": 1792527180,
-            "utc_offset": "-4.0",
+            "localtime": local.strftime("%Y-%m-%d %H:%M"),
+            "localtime_epoch": int(local.timestamp()),
+            "utc_offset": f"{offset_hours:.1f}",
         },
         "current": {
             "observation_time": "12:13 AM",
