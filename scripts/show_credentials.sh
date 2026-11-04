@@ -31,6 +31,7 @@ Generated $(date '+%Y-%m-%d %H:%M'). Do not commit this file.
 |---|---|---|---|
 | Airflow | http://localhost:8081 | admin | ${AIRFLOW_PASSWORD} |
 | Superset | http://localhost:8089 | admin | ${SUPERSET_ADMIN_PASSWORD} |
+| Superset MCP | http://localhost:5008/mcp | (no auth, localhost only; acts as admin) | - |
 | Postgres (weather data) | localhost:5000 / db ${DB_NAME} | ${DB_USER} | ${DB_PASSWORD} |
 
 ## dbt

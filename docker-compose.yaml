@@ -75,15 +75,17 @@ services:
 
   superset_init:
     container_name: superset_init
-    image: apache/superset:3.0.0-py310
+    # Superset 6.1 + psycopg2 + fastmcp, see docker/Dockerfile
+    build: ./docker
+    image: weather-superset:6.1.0
     command: ["/app/docker/docker-init.sh"]
     env_file: docker/.env
     environment:
       DATABASE_DB: superset_db
-    user: "root"
     volumes: &superset-volumes
-      - ./docker:/app/docker
       - ./docker/superset_config.py:/app/pythonpath/superset_config.py
+      - ./docker/superset_config_docker.py:/app/pythonpath/superset_config_docker.py
+      - ./docker/superset_setup.py:/app/docker/superset_setup.py
       - superset_home:/app/superset_home
     depends_on:
       db:
@@ -97,12 +99,12 @@ services:
 
   superset:
     container_name: superset_app
-    image: apache/superset:3.0.0-py310
+    build: ./docker
+    image: weather-superset:6.1.0
     command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
     env_file: docker/.env
     environment:
       DATABASE_DB: superset_db
-    user: "root"
     restart: unless-stopped
     ports:
       - 8089:8088
@@ -112,6 +114,32 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
+    networks:
+      - my_network
+
+  # MCP server for AI clients (Claude Code, Claude Desktop...): http://localhost:5008/mcp
+  superset_mcp:
+    container_name: superset_mcp
+    build: ./docker
+    image: weather-superset:6.1.0
+    command: ["/app/docker/docker-bootstrap.sh", "mcp"]
+    env_file: docker/.env
+    environment:
+      DATABASE_DB: superset_db
+    restart: unless-stopped
+    ports:
+      # Localhost only: MCP auth is disabled for local development
+      - 127.0.0.1:5008:5008
+    healthcheck:
+      # The image's default check probes the web app port (8088), not MCP
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:5008/mcp"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes: *superset-volumes
+    depends_on:
+      superset_init:
+        condition: service_completed_successfully
     networks:
       - my_network
 
