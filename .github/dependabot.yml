@@ -27,3 +27,6 @@ updates:
   - package-ecosystem: docker-compose
     directory: /
     schedule: {interval: weekly}
+    ignore:
+      # Built locally from this repo (docker-compose `build:`), not on any registry
+      - dependency-name: "weather-*"
