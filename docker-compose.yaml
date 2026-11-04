@@ -171,7 +171,7 @@ services:
     deploy:
       resources:
         limits: {memory: 256m, cpus: "0.5"}
-    image: redis:7.4.12
+    image: redis:8.10.3
     restart: unless-stopped
     volumes:
       - redis:/data
