@@ -22,10 +22,12 @@ DB_NAME = "weather_db"
 # Set by docker-compose from .env: the read-only weather_reader role
 DB_URI = os.getenv("WEATHER_DB_URI")
 SCHEMA = "dev"
-TABLES = ["weather_report", "daily_average"]
+TABLES = ["weather_report", "daily_average", "air_quality_daily", "astro_daily"]
 # Staging is not a reporting interface; remove the dataset older versions created
 RETIRED_DATASETS = ["stg_weather_data"]
 DASHBOARD_TITLE = "Weather Dashboard"
+# Preselected in the dashboard city filter
+DEFAULT_CITY = os.environ.get("DASHBOARD_DEFAULT_CITY", "Bucaramanga")
 REFRESH_SECONDS = 300
 
 
@@ -108,42 +110,128 @@ def metric(column, aggregate, label):
     }
 
 
+def latest_metric(column, label):
+    """Value of `column` in the most recent observation (Postgres array_agg trick)."""
+    return {
+        "expressionType": "SQL",
+        "sqlExpression": f"(array_agg({column} ORDER BY observed_at_utc DESC))[1]",
+        "label": label,
+    }
+
+
+def line_params(x_axis, grain, metrics, groupby=("city",), bar=False):
+    return {
+        "viz_type": "echarts_timeseries_bar" if bar else "echarts_timeseries_line",
+        "x_axis": x_axis,
+        "time_grain_sqla": grain,
+        "metrics": metrics,
+        "groupby": list(groupby),
+        "adhoc_filters": [],
+        "row_limit": 10000,
+        **({} if bar else {"markerEnabled": True}),
+    }
+
+
+def big_number(metric_def, subheader):
+    return {
+        "viz_type": "big_number_total",
+        "metric": metric_def,
+        "subheader": subheader,
+        "adhoc_filters": [],
+        "y_axis_format": "SMART_NUMBER",
+        "time_format": "smart_date",
+    }
+
+
 def chart_definitions(datasets):
+    report, daily = datasets["weather_report"], datasets["daily_average"]
+    air, astro = datasets["air_quality_daily"], datasets["astro_daily"]
+    # In the daily marts there is one row per city and day, so MAX just picks that value
     return [
         (
+            "Current temperature",
+            report,
+            big_number(latest_metric("temperature", "Temperature (C)"), "C, latest observation"),
+        ),
+        (
+            "Current humidity",
+            report,
+            big_number(latest_metric("humidity", "Humidity (%)"), "%, latest observation"),
+        ),
+        (
+            "Current PM2.5",
+            report,
+            big_number(latest_metric("aq_pm2_5", "PM2.5 (ug/m3)"), "ug/m3, latest observation"),
+        ),
+        (
             "Temperature and wind over time",
-            datasets["weather_report"],
-            {
-                "viz_type": "echarts_timeseries_line",
-                "x_axis": "observed_at_local",
-                "time_grain_sqla": "PT1H",
-                "metrics": [
+            report,
+            line_params(
+                "observed_at_local",
+                "PT1H",
+                [
                     metric("temperature", "AVG", "Temperature (C)"),
                     metric("wind_speed", "AVG", "Wind speed (km/h)"),
                 ],
-                "groupby": ["city"],
-                "adhoc_filters": [],
-                "row_limit": 10000,
-                "markerEnabled": True,
-            },
+            ),
+        ),
+        (
+            "Humidity and feels-like",
+            report,
+            line_params(
+                "observed_at_local",
+                "PT1H",
+                [
+                    metric("humidity", "AVG", "Humidity (%)"),
+                    metric("feelslike", "AVG", "Feels like (C)"),
+                    metric("temperature", "AVG", "Temperature (C)"),
+                ],
+            ),
         ),
         (
             "Daily average temperature",
-            datasets["daily_average"],
-            {
-                "viz_type": "echarts_timeseries_bar",
-                "x_axis": "date",
-                "time_grain_sqla": "P1D",
-                # One row per city and day, so MAX just picks that row's value
-                "metrics": [metric("avg_temperature", "MAX", "Avg temperature (C)")],
-                "groupby": ["city"],
-                "adhoc_filters": [],
-                "row_limit": 10000,
-            },
+            daily,
+            line_params(
+                "date",
+                "P1D",
+                [metric("avg_temperature", "MAX", "Avg temperature (C)")],
+                bar=True,
+            ),
+        ),
+        (
+            "Daily precipitation",
+            daily,
+            line_params(
+                "date", "P1D", [metric("total_precip", "MAX", "Precipitation (mm)")], bar=True
+            ),
+        ),
+        (
+            "UV index",
+            daily,
+            line_params("date", "P1D", [metric("max_uv_index", "MAX", "Max UV index")], bar=True),
+        ),
+        (
+            "Air quality (PM2.5 / PM10)",
+            air,
+            line_params(
+                "date",
+                "P1D",
+                [
+                    metric("avg_pm2_5", "MAX", "PM2.5 (ug/m3)"),
+                    metric("avg_pm10", "MAX", "PM10 (ug/m3)"),
+                ],
+            ),
+        ),
+        (
+            "US EPA index",
+            air,
+            line_params(
+                "date", "P1D", [metric("max_us_epa_index", "MAX", "US EPA index")], bar=True
+            ),
         ),
         (
             "Daily summary",
-            datasets["daily_average"],
+            daily,
             {
                 "viz_type": "table",
                 "query_mode": "raw",
@@ -162,35 +250,111 @@ def chart_definitions(datasets):
                 "row_limit": 60,
             },
         ),
+        (
+            "Sun and moon",
+            astro,
+            {
+                "viz_type": "table",
+                "query_mode": "raw",
+                "all_columns": [
+                    "date",
+                    "city",
+                    "sunrise",
+                    "sunset",
+                    "day_length_minutes",
+                    "moon_phase",
+                    "moon_illumination",
+                ],
+                "order_by_cols": [json.dumps(["date", False])],
+                "adhoc_filters": [],
+                "row_limit": 60,
+            },
+        ),
     ]
 
 
-def dashboard_layout(chart_ids):
+# Dashboard rows, top to bottom: (chart name, width in the 12-column grid)
+LAYOUT_ROWS = [
+    [("Current temperature", 4), ("Current humidity", 4), ("Current PM2.5", 4)],
+    [("Temperature and wind over time", 6), ("Humidity and feels-like", 6)],
+    [("Daily average temperature", 6), ("Daily precipitation", 6)],
+    [("UV index", 6), ("Air quality (PM2.5 / PM10)", 6)],
+    [("US EPA index", 12)],
+    [("Daily summary", 12)],
+    [("Sun and moon", 12)],
+]
+BIG_NUMBER_HEIGHT = 20
+CHART_HEIGHT = 50
+
+
+def dashboard_layout(chart_ids, rows=None):
+    """Build position_json; `chart_ids` is [(name, id)], `rows` a list of [(name, width)]."""
+    ids = dict(chart_ids)
+    rows = LAYOUT_ROWS if rows is None else rows
     layout = {
         "DASHBOARD_VERSION_KEY": "v2",
         "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
         "GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": [], "parents": ["ROOT_ID"]},
         "HEADER_ID": {"type": "HEADER", "id": "HEADER_ID", "meta": {"text": DASHBOARD_TITLE}},
     }
-    # One full-width chart per row
-    for i, (name, chart_id) in enumerate(chart_ids, start=1):
-        row, chart = f"ROW-{i}", f"CHART-{i}"
+    n = 0
+    for r, row_items in enumerate(rows, start=1):
+        row = f"ROW-{r}"
         layout["GRID_ID"]["children"].append(row)
         layout[row] = {
             "type": "ROW",
             "id": row,
-            "children": [chart],
+            "children": [],
             "parents": ["ROOT_ID", "GRID_ID"],
             "meta": {"background": "BACKGROUND_TRANSPARENT"},
         }
-        layout[chart] = {
-            "type": "CHART",
-            "id": chart,
-            "children": [],
-            "parents": ["ROOT_ID", "GRID_ID", row],
-            "meta": {"chartId": chart_id, "width": 12, "height": 50, "sliceName": name},
-        }
+        for name, width in row_items:
+            if name not in ids:
+                continue
+            n += 1
+            chart = f"CHART-{n}"
+            layout[row]["children"].append(chart)
+            height = BIG_NUMBER_HEIGHT if name.startswith("Current ") else CHART_HEIGHT
+            layout[chart] = {
+                "type": "CHART",
+                "id": chart,
+                "children": [],
+                "parents": ["ROOT_ID", "GRID_ID", row],
+                "meta": {
+                    "chartId": ids[name],
+                    "width": width,
+                    "height": height,
+                    "sliceName": name,
+                },
+            }
     return layout
+
+
+def city_filter(dataset_id):
+    """Native dashboard filter on `city`, applied to every chart that has that column."""
+    return {
+        "id": "NATIVE_FILTER-city",
+        "name": "City",
+        "filterType": "filter_select",
+        "type": "NATIVE_FILTER",
+        "targets": [{"datasetId": dataset_id, "column": {"name": "city"}}],
+        # Preselect the home city so the "Current ..." big numbers never mix in
+        # older rows of other cities (e.g. the New York history)
+        "defaultDataMask": {
+            "extraFormData": {"filters": [{"col": "city", "op": "IN", "val": [DEFAULT_CITY]}]},
+            "filterState": {"value": [DEFAULT_CITY]},
+            "ownState": {},
+        },
+        "controlValues": {
+            "multiSelect": True,
+            "enableEmptyFilter": False,
+            "defaultToFirstItem": False,
+            "inverseSelection": False,
+            "searchAllOptions": False,
+        },
+        "cascadeParentIds": [],
+        "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
+    }
 
 
 def main():
@@ -245,7 +409,12 @@ def main():
         f"{BASE}/dashboard/{dashboard_id}",
         json={
             "position_json": json.dumps(dashboard_layout(chart_ids)),
-            "json_metadata": json.dumps({"refresh_frequency": REFRESH_SECONDS}),
+            "json_metadata": json.dumps(
+                {
+                    "refresh_frequency": REFRESH_SECONDS,
+                    "native_filter_configuration": [city_filter(datasets["weather_report"])],
+                }
+            ),
         },
         timeout=TIMEOUT,
     ).raise_for_status()
