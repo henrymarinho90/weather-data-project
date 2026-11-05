@@ -29,8 +29,25 @@ DASHBOARD_TITLE = "Weather Dashboard"
 REFRESH_SECONDS = 300
 
 
+class LocalSession(requests.Session):
+    """Session for http://localhost:8088 that keeps Superset's session cookie.
+
+    Behind an HTTPS proxy (SUPERSET_PUBLIC_URL=https://...) Superset marks its
+    session cookie Secure on every response, and requests never sends Secure
+    cookies over plain http, so every POST/PUT would fail the CSRF check
+    ("The CSRF session token is missing"). This script only ever talks to
+    Superset inside its own container, so clearing the flag is safe.
+    """
+
+    def send(self, request, **kwargs):
+        response = super().send(request, **kwargs)
+        for cookie in self.cookies:
+            cookie.secure = False
+        return response
+
+
 def login():
-    session = requests.Session()
+    session = LocalSession()
     response = session.post(
         f"{BASE}/security/login",
         json={
@@ -248,7 +265,8 @@ def main():
             session.delete(f"{BASE}/dataset/{dataset_id}", timeout=TIMEOUT).raise_for_status()
             print(f"Deleted retired dataset '{table}'")
 
-    print("Dashboard ready: http://localhost:8089/superset/dashboard/weather/")
+    public_url = os.getenv("SUPERSET_PUBLIC_URL", "http://localhost:8089").rstrip("/")
+    print(f"Dashboard ready: {public_url}/superset/dashboard/weather/")
 
 
 if __name__ == "__main__":
