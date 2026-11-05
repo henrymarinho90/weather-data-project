@@ -57,7 +57,12 @@ def resolve(key, value):
 
 
 if mode == "--coolify":
-    overrides = {"SUPERSET_PUBLIC_URL": "https://superset.example.com", "USE_MOCK_API": "true"}
+    overrides = {
+        "SUPERSET_PUBLIC_URL": "https://superset.example.com",
+        "USE_MOCK_API": "true",
+        # No Docker MCP on servers: see COMPOSE_PROFILES in .env.example
+        "COMPOSE_PROFILES": "",
+    }
     print("# Paste into Coolify > your resource > Environment Variables (Developer view).")
     print("# Then replace DOCKER_GID (run on the server: stat -c %g /var/run/docker.sock),")
     print("# SUPERSET_PUBLIC_URL and, for live data, WEATHERSTACK_API_KEY / USE_MOCK_API=false.")

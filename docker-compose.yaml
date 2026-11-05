@@ -181,6 +181,9 @@ services:
       resources:
         limits: {memory: 1g, cpus: "1"}
     image: ${DBT_IMAGE:?run make init}
+    # One-shot: quoted "no" so Coolify neither adds unless-stopped (a restart loop)
+    # nor counts the exited container against the app's health
+    restart: "no"
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
       <<: *dbt-env
@@ -215,6 +218,8 @@ services:
   superset_init:
     <<: *superset
     container_name: superset_init
+    # One-shot (superset waits for it to exit 0): see the dbt service
+    restart: "no"
     deploy:
       resources:
         limits: {memory: 1g, cpus: "1"}
@@ -353,8 +358,14 @@ services:
 
   # Docker API for docker_mcp, read-only: POST=0 rejects every request but GET/HEAD
   # (no create, start, stop, exec, delete). Reachable only on the private docker_api network
+  #
+  # Opt-in (COMPOSE_PROFILES=docker-mcp, set by make init for laptops): Coolify
+  # attaches every service to its app network, which would let any container of
+  # the stack (incl. the public Superset) read the inspect data, env vars
+  # included, of every container on the server through docker_proxy
   docker_proxy:
     container_name: docker_proxy
+    profiles: ["docker-mcp"]
     deploy:
       resources:
         limits: {memory: 64m, cpus: "0.25"}
@@ -371,6 +382,7 @@ services:
 
   docker_mcp:
     container_name: docker_mcp
+    profiles: ["docker-mcp"]
     deploy:
       resources:
         limits: {memory: 256m, cpus: "0.5"}
