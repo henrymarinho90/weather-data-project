@@ -25,8 +25,11 @@ logs: ## Follow logs
 seed: ## Seed 30 days of synthetic weather data
 	docker compose exec af python /opt/airflow/api-request/seed_test_data.py --days 30
 
-superset-setup: ## Create Superset datasets and dashboards
+superset-setup: ## Create Superset datasets and dashboards (keeps UI edits)
 	docker compose exec superset python /app/docker/superset_setup.py
+
+superset-reset: ## Overwrite Superset charts and dashboard layout with the repo definitions
+	docker compose exec -e SUPERSET_SETUP_RESET=true superset python /app/docker/superset_setup.py
 
 creds: ## Show generated credentials
 	./scripts/show_credentials.sh

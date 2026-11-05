@@ -98,3 +98,73 @@ def test_city_filter_shape():
     json.dumps(f)
     assert f["filterType"] == "filter_select"
     assert f["targets"][0]["column"]["name"] == "city"
+
+
+def test_rename_map_and_layout_use_defined_names():
+    names = {name for name, _, _ in setup.chart_definitions(DATASETS)}
+    assert set(setup.RENAMED_CHARTS.values()) <= names
+    assert setup.BIG_NUMBERS <= names
+    assert {n for row in setup.LAYOUT_ROWS for n, _ in row} == names
+
+
+class FakeResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.body
+
+
+class FakeSession:
+    """Superset API stand-in: `charts` maps slice_name -> id."""
+
+    def __init__(self, charts):
+        self.charts = charts
+        self.calls = []
+
+    def get(self, url, params=None, timeout=None):
+        value = json.loads(params["q"])["filters"][0]["value"]
+        found = self.charts.get(value)
+        return FakeResponse({"result": [{"id": found}] if found else []})
+
+    def put(self, url, json=None, timeout=None):
+        self.calls.append(("PUT", url, json))
+        return FakeResponse({})
+
+    def post(self, url, json=None, timeout=None):
+        self.calls.append(("POST", url, json))
+        return FakeResponse({"id": 99})
+
+
+PAYLOAD = {"slice_name": "Sol y luna", "params": "{}"}
+
+
+def test_sync_chart_renames_old_english_chart_only(monkeypatch):
+    monkeypatch.setattr(setup, "RESET", False)
+    session = FakeSession({"Sun and moon": 7})
+    assert setup.sync_chart(session, "Sol y luna", PAYLOAD) == (7, False)
+    assert session.calls == [("PUT", f"{setup.BASE}/chart/7", {"slice_name": "Sol y luna"})]
+
+
+def test_sync_chart_keeps_ui_edits_without_reset(monkeypatch):
+    monkeypatch.setattr(setup, "RESET", False)
+    session = FakeSession({"Sol y luna": 7})
+    assert setup.sync_chart(session, "Sol y luna", PAYLOAD) == (7, False)
+    assert session.calls == []
+
+
+def test_sync_chart_overwrites_with_reset(monkeypatch):
+    monkeypatch.setattr(setup, "RESET", True)
+    session = FakeSession({"Sol y luna": 7})
+    setup.sync_chart(session, "Sol y luna", PAYLOAD)
+    assert session.calls == [("PUT", f"{setup.BASE}/chart/7", PAYLOAD)]
+
+
+def test_sync_chart_creates_missing(monkeypatch):
+    monkeypatch.setattr(setup, "RESET", False)
+    session = FakeSession({})
+    assert setup.sync_chart(session, "Sol y luna", PAYLOAD) == (99, True)
+    assert session.calls[0][0] == "POST"
