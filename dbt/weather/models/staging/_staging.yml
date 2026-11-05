@@ -15,7 +15,7 @@ models:
         data_tests:
           - not_null
       - name: temperature
-        description: "Temperature in degrees Celsius (°C)."
+        description: "Temperature in degrees Celsius (°C). From payload, else the legacy column."
       - name: weather_description
         description: "Text description of the weather conditions."
       - name: wind_speed
@@ -38,6 +38,107 @@ models:
                 severity: warn
       - name: loaded_at_utc
         description: "Timestamp (UTC) when the raw row was inserted."
+      - name: region
+        description: "Region/state of the city (Weatherstack location.region). Source: payload; NULL for legacy rows."
+      - name: country
+        description: "Country name. Source: payload; NULL for legacy rows."
+      - name: lat
+        description: "Latitude in decimal degrees. Source: payload; NULL for legacy rows."
+      - name: lon
+        description: "Longitude in decimal degrees. Source: payload; NULL for legacy rows."
+      - name: timezone_id
+        description: "IANA timezone id, e.g. America/Bogota. Source: payload; NULL for legacy rows."
+      - name: feelslike
+        description: "Apparent (feels-like) temperature in °C. Source: payload; NULL for legacy rows."
+      - name: humidity
+        description: "Relative humidity in %. Source: payload; NULL for legacy rows."
+        data_tests:
+          - column_between:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
+      - name: pressure
+        description: "Atmospheric pressure in hPa. Source: payload; NULL for legacy rows."
+      - name: precip
+        description: "Precipitation in mm. Source: payload; NULL for legacy rows."
+        data_tests:
+          - column_between:
+              min_value: 0
+              config:
+                severity: warn
+      - name: cloudcover
+        description: "Cloud cover in %. Source: payload; NULL for legacy rows."
+        data_tests:
+          - column_between:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
+      - name: uv_index
+        description: "UV index (dimensionless, >= 0). Source: payload; NULL for legacy rows."
+        data_tests:
+          - column_between:
+              min_value: 0
+              config:
+                severity: warn
+      - name: visibility
+        description: "Visibility in km. Source: payload; NULL for legacy rows."
+        data_tests:
+          - column_between:
+              min_value: 0
+              config:
+                severity: warn
+      - name: wind_degree
+        description: "Wind direction in degrees (0-360). Source: payload; NULL for legacy rows."
+      - name: wind_dir
+        description: "Wind direction as compass point, e.g. ESE. Source: payload; NULL for legacy rows."
+      - name: weather_code
+        description: "Weatherstack weather condition code. Source: payload; NULL for legacy rows."
+      - name: is_day
+        description: "True when it is daytime at the observation time. Source: payload; NULL for legacy rows."
+      - name: sunrise
+        description: "Local sunrise time (NULL if not parseable). Source: payload; NULL for legacy rows."
+      - name: sunset
+        description: "Local sunset time (NULL if not parseable). Source: payload; NULL for legacy rows."
+      - name: moonrise
+        description: "Local moonrise time; NULL when there is none that day (e.g. 'No moonrise'). Source: payload; NULL for legacy rows."
+      - name: moonset
+        description: "Local moonset time; NULL when there is none that day. Source: payload; NULL for legacy rows."
+      - name: moon_phase
+        description: "Moon phase name, e.g. Waning Crescent. Source: payload; NULL for legacy rows."
+      - name: moon_illumination
+        description: "Moon illumination in %. Source: payload; NULL for legacy rows."
+        data_tests:
+          - column_between:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
+      - name: aq_co
+        description: "Carbon monoxide (CO) in µg/m³. Source: payload; NULL for legacy rows."
+      - name: aq_no2
+        description: "Nitrogen dioxide (NO2) in µg/m³. Source: payload; NULL for legacy rows."
+      - name: aq_o3
+        description: "Ozone (O3) in µg/m³. Source: payload; NULL for legacy rows."
+      - name: aq_so2
+        description: "Sulphur dioxide (SO2) in µg/m³. Source: payload; NULL for legacy rows."
+      - name: aq_pm2_5
+        description: "Particulate matter PM2.5 in µg/m³. Source: payload; NULL for legacy rows."
+      - name: aq_pm10
+        description: "Particulate matter PM10 in µg/m³. Source: payload; NULL for legacy rows."
+      - name: us_epa_index
+        description: "US EPA air quality index (1 good .. 6 hazardous). Source: payload; NULL for legacy rows."
+        data_tests:
+          - column_between:
+              min_value: 1
+              max_value: 6
+              config:
+                severity: warn
+      - name: gb_defra_index
+        description: "UK DEFRA air quality index (1-10). Source: payload; NULL for legacy rows."
+      - name: source
+        description: "Origin of the row: 'api', 'mock' or NULL for legacy rows. Source: payload; NULL for legacy rows."
 
 unit_tests:
   - name: stg_weather_data_dedups_same_observation
@@ -53,3 +154,69 @@ unit_tests:
       rows:
         - {id: 2, city: 'New York', temperature: 20, weather_description: 'Sunny', wind_speed: 10, observed_at_local: '2025-01-01 08:00:00', observed_at_utc: '2025-01-01 12:00:00', utc_offset_hours: -4.0, loaded_at_utc: '2025-01-01 12:10:00'}
         - {id: 3, city: 'Chicago', temperature: 5, weather_description: 'Cloudy', wind_speed: 20, observed_at_local: '2025-01-01 07:00:00', observed_at_utc: '2025-01-01 12:00:00', utc_offset_hours: -5.0, loaded_at_utc: '2025-01-01 12:15:00'}
+
+  - name: stg_weather_data_extracts_payload
+    description: "A row with a Weatherstack payload yields typed columns: string air quality -> numeric, is_day -> boolean, 'No moonrise' -> NULL."
+    model: stg_weather_data
+    given:
+      - input: source('weather', 'raw_weather_data')
+        rows:
+          - id: 10
+            city: 'Bucaramanga'
+            temperature: 99
+            weather_description: 'legacy text'
+            wind_speed: 99
+            time: '2026-11-05 07:25:00'
+            inserted_at: '2026-11-05 12:30:00'
+            utc_offset: '-5.0'
+            source: 'mock'
+            payload: '{"location":{"name":"Bucaramanga","country":"Colombia","region":"Santander","lat":"7.130","lon":"-73.126","timezone_id":"America/Bogota","utc_offset":"-5.0"},"current":{"temperature":19,"weather_code":353,"weather_descriptions":["Light rain shower"],"astro":{"sunrise":"05:41 AM","sunset":"05:32 PM","moonrise":"No moonrise","moonset":"02:56 PM","moon_phase":"Waning Crescent","moon_illumination":18},"air_quality":{"co":"843","no2":"15.7","o3":"48","so2":"2.7","pm2_5":"7","pm10":"7.2","us-epa-index":"1","gb-defra-index":"1"},"wind_speed":4,"wind_degree":116,"wind_dir":"ESE","pressure":1014,"precip":0.2,"humidity":88,"cloudcover":58,"feelslike":20,"uv_index":0,"visibility":10,"is_day":"yes"}}'
+    expect:
+      rows:
+        - id: 10
+          city: 'Bucaramanga'
+          temperature: 19
+          weather_description: 'Light rain shower'
+          wind_speed: 4
+          region: 'Santander'
+          country: 'Colombia'
+          lat: '7.130'
+          lon: -73.126
+          timezone_id: 'America/Bogota'
+          feelslike: 20
+          humidity: 88
+          pressure: 1014
+          precip: 0.2
+          cloudcover: 58
+          uv_index: 0
+          visibility: 10
+          wind_degree: 116
+          wind_dir: 'ESE'
+          weather_code: 353
+          is_day: true
+          sunrise: '05:41:00'
+          sunset: '17:32:00'
+          moonrise: null
+          moonset: '14:56:00'
+          moon_phase: 'Waning Crescent'
+          moon_illumination: 18
+          aq_co: 843
+          aq_no2: 15.7
+          aq_o3: 48
+          aq_so2: 2.7
+          aq_pm2_5: 7
+          aq_pm10: 7.2
+          us_epa_index: 1
+          gb_defra_index: 1
+          source: 'mock'
+
+  - name: stg_weather_data_legacy_row_falls_back
+    description: "A legacy row (payload NULL) keeps its legacy temperature/description/wind and gets NULL payload columns."
+    model: stg_weather_data
+    given:
+      - input: source('weather', 'raw_weather_data')
+        rows:
+          - {id: 20, city: 'New York', temperature: 12, weather_description: 'Overcast', wind_speed: 15, time: '2025-01-01 08:00:00', inserted_at: '2025-01-01 12:10:00', utc_offset: '-5.0'}
+    expect:
+      rows:
+        - {id: 20, city: 'New York', temperature: 12, weather_description: 'Overcast', wind_speed: 15, humidity: null, is_day: null, sunrise: null, aq_pm2_5: null, us_epa_index: null, source: null}

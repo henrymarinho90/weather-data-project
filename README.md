@@ -80,7 +80,7 @@ All ports are published on `127.0.0.1` only.
 
 ## Using it
 
-1. **Data source:** `USE_MOCK_API` in `.env`. `true` (default) uses a built-in sample response stamped with the current New York time (fixed weather values, no API calls); `false` calls Weatherstack for `WEATHER_CITY`. The twice-daily schedule uses about 60 API calls a month, and each manual trigger one more. Apply `.env` changes with `make up`.
+1. **Data source:** `USE_MOCK_API` in `.env`. `true` (default) uses a built-in sample response stamped with the current Bogotá time (fixed weather values, no API calls); `false` calls Weatherstack for each city in `WEATHER_CITIES` (default `Bucaramanga`; `WEATHER_CITY` is a legacy fallback). The schedule is 07:00 and 19:00 Bogotá time (`0 0,12 * * *` UTC), about 62 API calls a month per city, and each manual trigger one more. Real calls are skipped with a warning once `WEATHERSTACK_MONTHLY_CALL_LIMIT` (default 90, below the free plan's 100) is reached in the UTC month; multiple cities are fetched one call at a time, `WEATHERSTACK_CALL_INTERVAL_SECONDS` apart. Apply `.env` changes with `make up`.
 2. **DAG** `api-dbt-orchestrator`: `ingest_weather_data` → `transform_data_task` (`dbt build`: models plus tests) → `check_source_freshness` (fails if the newest observation is over 25 h old). Tasks retry once and time out after 10 minutes. When a task fails for good, `airflow/dags/alerting.py` posts to `ALERT_WEBHOOK_URL` (Slack or Discord incoming webhook) if set, otherwise it only logs.
 3. **Dashboard:** `make superset-setup` creates the read-only `weather_db` connection, datasets for `weather_report` and `daily_average`, three charts and a **Weather Dashboard** (http://localhost:8089/superset/dashboard/weather/) that refreshes every 5 minutes. Re-running it updates everything in place.
 
@@ -106,7 +106,7 @@ The project [`.mcp.json`](.mcp.json) registers all five servers for Claude Code:
 | **Docker** (this repo, `docker-mcp/server.py`) | `get_stack_health`, `list_containers`, `get_container_details`, `get_container_logs` (tail/since/contains), `get_container_stats`, `list_images`. | Only this compose project's containers; selected fields only (never `Env` or commands); logs pass through a secret-masking filter; the Docker API is reached through `docker_proxy` with `POST=0` (writes return 403) on an internal network no other container joins. |
 | **Postgres** ([Postgres MCP Pro](https://github.com/crystaldba/postgres-mcp) 0.3.0) | Schemas, object details, SQL, explain plans, health checks, slowest queries (`pg_stat_statements`). | `--access-mode=restricted` plus `weather_reader`. Index simulation needs `hypopg`, which the official image lacks. |
 
-Example prompts: *"Is the whole stack healthy? Show the last errors in the Airflow logs."*, *"Did the weather DAG's last run succeed?"*, *"Which models depend on stg_weather_data and do their tests pass?"*, *"What was the average temperature in New York last week?"*, *"Show the slowest queries."*
+Example prompts: *"Is the whole stack healthy? Show the last errors in the Airflow logs."*, *"Did the weather DAG's last run succeed?"*, *"Which models depend on stg_weather_data and do their tests pass?"*, *"What was the average temperature in Bucaramanga last week?"*, *"Show the slowest queries."*
 
 **Why a gateway:** none of the five servers validates the `Host`/`Origin` headers, so a malicious web page could reach them through DNS rebinding. `mcp_gateway` is their only published port and answers 421 for a foreign `Host` and 403 for a foreign `Origin`.
 

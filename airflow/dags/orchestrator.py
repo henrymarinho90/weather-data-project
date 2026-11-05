@@ -69,8 +69,9 @@ with DAG(
     dag_id="api-dbt-orchestrator",
     description="Ingest weather data and transform it with dbt",
     start_date=datetime(2026, 10, 26),
-    # Twice daily (08:00 and 20:00 UTC) = ~60 API calls/month, within the free tier
-    schedule="0 8,20 * * *",
+    # Twice daily at 07:00 and 19:00 Bogota (UTC-5, no DST) = 00:00 and 12:00 UTC.
+    # ~62 API calls/month for one city, leaving headroom for retries within the 100/month free plan
+    schedule="0 0,12 * * *",
     catchup=False,
     max_active_runs=1,
     default_args={

@@ -29,3 +29,12 @@ sources:
             description: "Timestamp (UTC, DB default now()) when the row was inserted."
           - name: utc_offset
             description: "UTC offset of the city in hours, stored as text (e.g. '-4.0')."
+          - name: payload
+            description: "Full Weatherstack /current JSON response (JSONB). NULL for legacy rows loaded before payload capture."
+          - name: source
+            description: "Origin of the row: 'api' (real Weatherstack call) or 'mock'. NULL for legacy rows."
+            data_tests:
+              - accepted_values:
+                  values: ['api', 'mock']
+                  config:
+                    severity: warn

@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 import requests
@@ -21,8 +23,8 @@ class FakeResponse:
 
 def test_mock_fetch_data_shape():
     data = api_request.mock_fetch_data()
-    assert data["location"]["name"] == "New York"
-    assert data["location"]["utc_offset"] in ("-4.0", "-5.0")
+    assert data["location"]["name"] == "Bucaramanga"
+    assert data["location"]["utc_offset"] == "-5.0"
     assert isinstance(data["current"]["temperature"], int)
     assert data["current"]["weather_descriptions"]
 
@@ -98,10 +100,55 @@ def test_fetch_data_propagates_http_error(monkeypatch):
         api_request.fetch_data()
 
 
-def test_mock_fetch_data_uses_current_new_york_time_across_dst():
-    summer = api_request.mock_fetch_data(datetime(2026, 10, 20, 0, 13, tzinfo=UTC))
-    assert summer["location"]["localtime"] == "2026-10-19 20:13"
-    assert summer["location"]["utc_offset"] == "-4.0"
-    winter = api_request.mock_fetch_data(datetime(2026, 11, 5, 13, 0, tzinfo=UTC))
-    assert winter["location"]["localtime"] == "2026-11-05 08:00"
-    assert winter["location"]["utc_offset"] == "-5.0"
+NOW = datetime(2026, 11, 5, 12, 25, tzinfo=UTC)
+
+
+def test_mock_fetch_data_is_bogota_stamped_and_deterministic():
+    data = api_request.mock_fetch_data(now=NOW)
+    assert data == api_request.mock_fetch_data(now=NOW)
+    assert data["location"]["localtime"] == "2026-11-05 07:25"
+    assert (
+        data["location"]["localtime_epoch"] == 1793863500
+    )  # local wall clock as UTC, like the API
+    assert data["location"]["utc_offset"] == "-5.0"
+    assert data["location"]["timezone_id"] == "America/Bogota"
+
+
+def test_mock_fetch_data_city_and_no_shared_state():
+    data = api_request.mock_fetch_data(city="Medellin", now=NOW)
+    assert data["location"]["name"] == "Medellin"
+    data["current"]["air_quality"]["co"] = "x"
+    assert api_request.mock_fetch_data(now=NOW)["current"]["air_quality"]["co"] == "843"
+
+
+def test_mock_matches_real_fixture():
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "bucaramanga_current.json").read_text()
+    )
+    data = api_request.mock_fetch_data(now=NOW)
+    assert data["current"] == fixture["current"]
+    assert data["location"] == fixture["location"]
+
+
+def test_get_cities(monkeypatch):
+    monkeypatch.delenv("WEATHER_CITIES", raising=False)
+    monkeypatch.delenv("WEATHER_CITY", raising=False)
+    assert api_request.get_cities() == ["Bucaramanga"]
+    monkeypatch.setenv("WEATHER_CITY", "Paris")
+    assert api_request.get_cities() == ["Paris"]
+    monkeypatch.setenv("WEATHER_CITIES", " Bogota , Cali,,")
+    assert api_request.get_cities() == ["Bogota", "Cali"]
+    monkeypatch.setenv("WEATHER_CITIES", " , ")
+    assert api_request.get_cities() == ["Bucaramanga"]
+
+
+def test_fetch_data_explicit_city(monkeypatch):
+    monkeypatch.setenv("WEATHERSTACK_API_KEY", "k")
+    calls = {}
+    monkeypatch.setattr(
+        api_request.requests,
+        "get",
+        lambda url, **kw: calls.update(kw) or FakeResponse({"current": {}}),
+    )
+    api_request.fetch_data("Cali")
+    assert calls["params"]["query"] == "Cali"

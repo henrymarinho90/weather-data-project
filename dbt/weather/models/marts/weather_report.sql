@@ -1,8 +1,19 @@
 select
     city,
-    temperature,
-    weather_description,
-    wind_speed,
     observed_at_local,
-    observed_at_utc
+    observed_at_utc,
+    temperature,
+    feelslike,
+    humidity,
+    precip,
+    pressure,
+    cloudcover,
+    uv_index,
+    visibility,
+    wind_speed,
+    wind_dir,
+    weather_description,
+    is_day,
+    aq_pm2_5,
+    us_epa_index
 from {{ ref('stg_weather_data') }}

@@ -75,6 +75,15 @@ jobs:
             "select count(*) from dev.weather_report")
           echo "weather_report rows: $rows"
           [ "$rows" -ge 1 ]
+      - name: Check the payload-derived marts have data
+        run: |
+          db=$(grep '^DB_NAME=' .env | cut -d= -f2)
+          q() { docker compose exec -T db psql -U postgres -d "$db" -tAc "$1"; }
+          aq=$(q "select count(*) from dev.air_quality_daily")
+          astro=$(q "select count(*) from dev.astro_daily")
+          hum=$(q "select count(*) from dev.weather_report where humidity is not null")
+          echo "air_quality_daily rows: $aq, astro_daily rows: $astro, weather_report rows with humidity: $hum"
+          [ "$aq" -ge 1 ] && [ "$astro" -ge 1 ] && [ "$hum" -ge 1 ]
       - name: dbt MCP server is healthy
         run: |
           for i in $(seq 1 30); do

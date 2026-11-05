@@ -1,8 +1,8 @@
 """Populate dev.raw_weather_data with synthetic history for testing/dashboards.
 
 Generates two observations per day for the last N days, without calling the API.
-Observations are at 08:00 and 20:00 New York local time. Note the DAG itself runs
-at 08:00 and 20:00 UTC, so this mirrors its twice-daily cadence, not its clock times.
+Observations are at 07:00 and 19:00 Bogota local time, matching the DAG's schedule
+(00:00 and 12:00 UTC). Rows have no payload/source (like pre-migration rows).
 Re-running is idempotent: rows whose (city, time) already exist are skipped.
 
 Run inside the Airflow container:
@@ -16,8 +16,8 @@ from zoneinfo import ZoneInfo
 
 from insert_records import connect_to_db, create_table
 
-CITY = "New York"
-TZ = ZoneInfo("America/New_York")
+CITY = "Bucaramanga"
+TZ = ZoneInfo("America/Bogota")
 DESCRIPTIONS = ["Sunny", "Clear", "Partly cloudy", "Overcast", "Light rain", "Mist"]
 WEIGHTS = [25, 20, 25, 15, 10, 5]
 
@@ -39,7 +39,7 @@ def generate_rows(days, rng):
         day = today - timedelta(days=d)
         # Seasonal trend: roughly 0.25 C cooler per day going into autumn
         base = 12 + 0.25 * d
-        for hour, diurnal in ((8, -3), (20, 1)):
+        for hour, diurnal in ((7, -3), (19, 1)):
             local = datetime.combine(day, time(hour), tzinfo=TZ)
             offset_hours = local.utcoffset().total_seconds() / 3600
             yield (

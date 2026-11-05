@@ -17,6 +17,8 @@ models:
         description: "Text description of the weather conditions."
       - name: wind_speed
         description: "Wind speed in kilometres per hour (km/h)."
+      - name: wind_dir
+        description: "Wind direction as compass point."
       - name: observed_at_local
         description: "Observation time, local wall-clock time of the city."
         data_tests:
@@ -25,6 +27,34 @@ models:
         description: "Observation time in UTC."
         data_tests:
           - not_null
+      - name: feelslike
+        description: "Apparent temperature in °C."
+      - name: humidity
+        description: "Relative humidity in %."
+        data_tests:
+          - column_between: {min_value: 0, max_value: 100, config: {severity: warn}}
+      - name: precip
+        description: "Precipitation in mm."
+      - name: pressure
+        description: "Pressure in hPa."
+      - name: cloudcover
+        description: "Cloud cover in %."
+        data_tests:
+          - column_between: {min_value: 0, max_value: 100, config: {severity: warn}}
+      - name: uv_index
+        description: "UV index (>= 0)."
+        data_tests:
+          - column_between: {min_value: 0, config: {severity: warn}}
+      - name: visibility
+        description: "Visibility in km."
+      - name: is_day
+        description: "True during daytime."
+      - name: aq_pm2_5
+        description: "PM2.5 in µg/m³."
+      - name: us_epa_index
+        description: "US EPA air quality index (1-6)."
+        data_tests:
+          - column_between: {min_value: 1, max_value: 6, config: {severity: warn}}
 
   - name: daily_average
     description: "Daily temperature and wind statistics per city, by local calendar date."
@@ -47,3 +77,67 @@ models:
         description: "Maximum temperature in °C."
       - name: avg_wind_speed
         description: "Average wind speed in km/h, rounded to 2 decimals."
+      - name: avg_humidity
+        description: "Average relative humidity in %, rounded to 2 decimals."
+        data_tests:
+          - column_between: {min_value: 0, max_value: 100, config: {severity: warn}}
+      - name: total_precip
+        description: "Total precipitation in mm (sum of observations), rounded to 2 decimals."
+      - name: max_uv_index
+        description: "Maximum UV index of the day."
+      - name: avg_pm2_5
+        description: "Average PM2.5 in µg/m³, rounded to 2 decimals."
+
+  - name: air_quality_daily
+    description: "Daily air quality per city and local date; only days with air quality data."
+    columns:
+      - name: city
+        description: "City name."
+        data_tests: [not_null]
+      - name: date
+        description: "Local calendar date."
+        data_tests: [not_null]
+      - name: n_observations
+        description: "Number of observations with air quality data that day."
+      - name: avg_pm2_5
+        description: "Average PM2.5 in µg/m³."
+      - name: avg_pm10
+        description: "Average PM10 in µg/m³."
+      - name: avg_o3
+        description: "Average ozone in µg/m³."
+      - name: avg_no2
+        description: "Average nitrogen dioxide in µg/m³."
+      - name: avg_so2
+        description: "Average sulphur dioxide in µg/m³."
+      - name: avg_co
+        description: "Average carbon monoxide in µg/m³."
+      - name: max_us_epa_index
+        description: "Worst (max) US EPA air quality index of the day (1-6)."
+        data_tests:
+          - column_between: {min_value: 1, max_value: 6, config: {severity: warn}}
+
+  - name: astro_daily
+    description: "Sun and moon data per city and local date, from the latest observation of the day with payload."
+    columns:
+      - name: city
+        description: "City name."
+        data_tests: [not_null]
+      - name: date
+        description: "Local calendar date."
+        data_tests: [not_null]
+      - name: sunrise
+        description: "Local sunrise time."
+      - name: sunset
+        description: "Local sunset time."
+      - name: day_length_minutes
+        description: "Minutes between sunrise and sunset."
+        data_tests:
+          - column_between: {min_value: 0, max_value: 1440, config: {severity: warn}}
+      - name: moonrise
+        description: "Local moonrise time; NULL if none that day."
+      - name: moonset
+        description: "Local moonset time; NULL if none that day."
+      - name: moon_phase
+        description: "Moon phase name."
+      - name: moon_illumination
+        description: "Moon illumination in %."
