@@ -180,7 +180,7 @@ unit_tests:
           wind_speed: 4
           region: 'Santander'
           country: 'Colombia'
-          lat: 7.130
+          lat: '7.130'
           lon: -73.126
           timezone_id: 'America/Bogota'
           feelslike: 20
