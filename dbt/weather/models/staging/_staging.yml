@@ -102,7 +102,7 @@ models:
       - name: sunset
         description: "Local sunset time (NULL if not parseable). Source: payload; NULL for legacy rows."
       - name: moonrise
-        description: "Local moonrise time; NULL when there is none that day (e.g. "No moonrise"). Source: payload; NULL for legacy rows."
+        description: "Local moonrise time; NULL when there is none that day (e.g. 'No moonrise'). Source: payload; NULL for legacy rows."
       - name: moonset
         description: "Local moonset time; NULL when there is none that day. Source: payload; NULL for legacy rows."
       - name: moon_phase
