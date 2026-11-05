@@ -1,10 +1,14 @@
 """Register the weather database, datasets, charts and dashboard in Superset.
 
-Safe to re-run: objects are matched by name and updated in place (connection
-string, chart definitions, dashboard layout), so changes in .env or in the dbt
-models are applied without creating duplicates.
+Safe to re-run without creating duplicates. Charts and the dashboard are
+created from this file the first time; after that they belong to the Superset
+UI, so visual edits (layout, colors, formats, titles) survive re-runs. Existing
+objects only get renamed (RENAMED_CHARTS, LEGACY_DASHBOARD_TITLES) and the
+connection string / dataset columns refreshed. SUPERSET_SETUP_RESET=true
+overwrites every chart and the dashboard layout with the definitions below.
 Run inside the Superset container:
-    docker exec superset_app python /app/docker/superset_setup.py
+    python /app/docker/superset_setup.py
+    SUPERSET_SETUP_RESET=true python /app/docker/superset_setup.py
 """
 
 import json
@@ -25,7 +29,11 @@ SCHEMA = "dev"
 TABLES = ["weather_report", "daily_average", "air_quality_daily", "astro_daily"]
 # Staging is not a reporting interface; remove the dataset older versions created
 RETIRED_DATASETS = ["stg_weather_data"]
-DASHBOARD_TITLE = "Weather Dashboard"
+DASHBOARD_TITLE = "Panel del clima"
+DASHBOARD_SLUG = "weather"
+# Older titles of the same dashboard, renamed to DASHBOARD_TITLE
+LEGACY_DASHBOARD_TITLES = {"Weather Dashboard"}
+RESET = os.getenv("SUPERSET_SETUP_RESET", "false").lower() == "true"
 # Preselected in the dashboard city filter
 DEFAULT_CITY = os.environ.get("DASHBOARD_DEFAULT_CITY", "Bucaramanga")
 REFRESH_SECONDS = 300
@@ -149,88 +157,91 @@ def chart_definitions(datasets):
     # In the daily marts there is one row per city and day, so MAX just picks that value
     return [
         (
-            "Current temperature",
+            "Temperatura actual",
             report,
-            big_number(latest_metric("temperature", "Temperature (C)"), "C, latest observation"),
+            big_number(latest_metric("temperature", "Temperatura (°C)"), "°C, última observación"),
         ),
         (
-            "Current humidity",
+            "Humedad actual",
             report,
-            big_number(latest_metric("humidity", "Humidity (%)"), "%, latest observation"),
+            big_number(latest_metric("humidity", "Humedad (%)"), "%, última observación"),
         ),
         (
-            "Current PM2.5",
+            "PM2.5 actual",
             report,
-            big_number(latest_metric("aq_pm2_5", "PM2.5 (ug/m3)"), "ug/m3, latest observation"),
+            big_number(latest_metric("aq_pm2_5", "PM2.5 (µg/m³)"), "µg/m³, última observación"),
         ),
         (
-            "Temperature and wind over time",
-            report,
-            line_params(
-                "observed_at_local",
-                "PT1H",
-                [
-                    metric("temperature", "AVG", "Temperature (C)"),
-                    metric("wind_speed", "AVG", "Wind speed (km/h)"),
-                ],
-            ),
-        ),
-        (
-            "Humidity and feels-like",
+            "Temperatura y viento",
             report,
             line_params(
                 "observed_at_local",
                 "PT1H",
                 [
-                    metric("humidity", "AVG", "Humidity (%)"),
-                    metric("feelslike", "AVG", "Feels like (C)"),
-                    metric("temperature", "AVG", "Temperature (C)"),
+                    metric("temperature", "AVG", "Temperatura (°C)"),
+                    metric("wind_speed", "AVG", "Viento (km/h)"),
                 ],
             ),
         ),
         (
-            "Daily average temperature",
+            "Humedad y sensación térmica",
+            report,
+            line_params(
+                "observed_at_local",
+                "PT1H",
+                [
+                    metric("humidity", "AVG", "Humedad (%)"),
+                    metric("feelslike", "AVG", "Sensación térmica (°C)"),
+                    metric("temperature", "AVG", "Temperatura (°C)"),
+                ],
+            ),
+        ),
+        (
+            "Temperatura promedio diaria",
             daily,
             line_params(
                 "date",
                 "P1D",
-                [metric("avg_temperature", "MAX", "Avg temperature (C)")],
+                [metric("avg_temperature", "MAX", "Temperatura promedio (°C)")],
                 bar=True,
             ),
         ),
         (
-            "Daily precipitation",
+            "Lluvia diaria",
+            daily,
+            line_params("date", "P1D", [metric("total_precip", "MAX", "Lluvia (mm)")], bar=True),
+        ),
+        (
+            "Índice UV",
             daily,
             line_params(
-                "date", "P1D", [metric("total_precip", "MAX", "Precipitation (mm)")], bar=True
+                "date", "P1D", [metric("max_uv_index", "MAX", "Índice UV máximo")], bar=True
             ),
         ),
         (
-            "UV index",
-            daily,
-            line_params("date", "P1D", [metric("max_uv_index", "MAX", "Max UV index")], bar=True),
-        ),
-        (
-            "Air quality (PM2.5 / PM10)",
+            "Calidad del aire (PM2.5 / PM10)",
             air,
             line_params(
                 "date",
                 "P1D",
                 [
-                    metric("avg_pm2_5", "MAX", "PM2.5 (ug/m3)"),
-                    metric("avg_pm10", "MAX", "PM10 (ug/m3)"),
+                    metric("avg_pm2_5", "MAX", "PM2.5 (µg/m³)"),
+                    metric("avg_pm10", "MAX", "PM10 (µg/m³)"),
                 ],
             ),
         ),
         (
-            "US EPA index",
+            "Índice de calidad del aire (EPA)",
             air,
             line_params(
-                "date", "P1D", [metric("max_us_epa_index", "MAX", "US EPA index")], bar=True
+                "date",
+                "P1D",
+                [metric("max_us_epa_index", "MAX", "Índice de calidad del aire (EPA)")],
+                bar=True,
             ),
         ),
         (
-            "Daily summary",
+            "Resumen diario",
             daily,
             {
                 "viz_type": "table",
@@ -251,7 +262,7 @@ def chart_definitions(datasets):
             },
         ),
         (
-            "Sun and moon",
+            "Sol y luna",
             astro,
             {
                 "viz_type": "table",
@@ -273,15 +284,81 @@ def chart_definitions(datasets):
     ]
 
 
+# English names of earlier versions -> current names (renamed in place, keeping edits)
+RENAMED_CHARTS = {
+    "Current temperature": "Temperatura actual",
+    "Current humidity": "Humedad actual",
+    "Current PM2.5": "PM2.5 actual",
+    "Temperature and wind over time": "Temperatura y viento",
+    "Humidity and feels-like": "Humedad y sensación térmica",
+    "Daily average temperature": "Temperatura promedio diaria",
+    "Daily precipitation": "Lluvia diaria",
+    "UV index": "Índice UV",
+    "Air quality (PM2.5 / PM10)": "Calidad del aire (PM2.5 / PM10)",
+    "US EPA index": "Índice de calidad del aire (EPA)",
+    "Daily summary": "Resumen diario",
+    "Sun and moon": "Sol y luna",
+}
+BIG_NUMBERS = {"Temperatura actual", "Humedad actual", "PM2.5 actual"}
+
+# Spanish labels for dataset columns (table headers, filter and axis names)
+COLUMN_LABELS = {
+    "city": "Ciudad",
+    "date": "Fecha",
+    "observed_at_local": "Hora local",
+    "observed_at_utc": "Hora UTC",
+    "temperature": "Temperatura (°C)",
+    "feelslike": "Sensación térmica (°C)",
+    "humidity": "Humedad (%)",
+    "precip": "Lluvia (mm)",
+    "pressure": "Presión (hPa)",
+    "cloudcover": "Nubosidad (%)",
+    "uv_index": "Índice UV",
+    "visibility": "Visibilidad (km)",
+    "wind_speed": "Viento (km/h)",
+    "wind_dir": "Dirección del viento",
+    "weather_description": "Descripción",
+    "is_day": "Es de día",
+    "aq_pm2_5": "PM2.5 (µg/m³)",
+    "us_epa_index": "Índice EPA",
+    "n_observations": "Observaciones",
+    "avg_temperature": "Temp. promedio (°C)",
+    "min_temperature": "Temp. mínima (°C)",
+    "max_temperature": "Temp. máxima (°C)",
+    "avg_wind_speed": "Viento promedio (km/h)",
+    "avg_humidity": "Humedad promedio (%)",
+    "total_precip": "Lluvia total (mm)",
+    "max_uv_index": "Índice UV máximo",
+    "avg_pm2_5": "PM2.5 promedio (µg/m³)",
+    "avg_pm10": "PM10 promedio (µg/m³)",
+    "avg_o3": "O3 promedio (µg/m³)",
+    "avg_no2": "NO2 promedio (µg/m³)",
+    "avg_so2": "SO2 promedio (µg/m³)",
+    "avg_co": "CO promedio (µg/m³)",
+    "max_us_epa_index": "Índice EPA máximo",
+    "sunrise": "Amanecer",
+    "sunset": "Atardecer",
+    "day_length_minutes": "Duración del día (min)",
+    "moonrise": "Salida de la luna",
+    "moonset": "Puesta de la luna",
+    "moon_phase": "Fase lunar",
+    "moon_illumination": "Iluminación lunar (%)",
+}
+# Fields the dataset PUT accepts for a column (GET returns more)
+COLUMN_FIELDS = (
+    "id", "column_name", "type", "verbose_name", "description", "expression",
+    "filterable", "groupby", "is_active", "is_dttm", "python_date_format", "extra",
+)  # fmt: skip
+
 # Dashboard rows, top to bottom: (chart name, width in the 12-column grid)
 LAYOUT_ROWS = [
-    [("Current temperature", 4), ("Current humidity", 4), ("Current PM2.5", 4)],
-    [("Temperature and wind over time", 6), ("Humidity and feels-like", 6)],
-    [("Daily average temperature", 6), ("Daily precipitation", 6)],
-    [("UV index", 6), ("Air quality (PM2.5 / PM10)", 6)],
-    [("US EPA index", 12)],
-    [("Daily summary", 12)],
-    [("Sun and moon", 12)],
+    [("Temperatura actual", 4), ("Humedad actual", 4), ("PM2.5 actual", 4)],
+    [("Temperatura y viento", 6), ("Humedad y sensación térmica", 6)],
+    [("Temperatura promedio diaria", 6), ("Lluvia diaria", 6)],
+    [("Índice UV", 6), ("Calidad del aire (PM2.5 / PM10)", 6)],
+    [("Índice de calidad del aire (EPA)", 12)],
+    [("Resumen diario", 12)],
+    [("Sol y luna", 12)],
 ]
 BIG_NUMBER_HEIGHT = 20
 CHART_HEIGHT = 50
@@ -314,7 +391,7 @@ def dashboard_layout(chart_ids, rows=None):
             n += 1
             chart = f"CHART-{n}"
             layout[row]["children"].append(chart)
-            height = BIG_NUMBER_HEIGHT if name.startswith("Current ") else CHART_HEIGHT
+            height = BIG_NUMBER_HEIGHT if name in BIG_NUMBERS else CHART_HEIGHT
             layout[chart] = {
                 "type": "CHART",
                 "id": chart,
@@ -334,11 +411,11 @@ def city_filter(dataset_id):
     """Native dashboard filter on `city`, applied to every chart that has that column."""
     return {
         "id": "NATIVE_FILTER-city",
-        "name": "City",
+        "name": "Ciudad",
         "filterType": "filter_select",
         "type": "NATIVE_FILTER",
         "targets": [{"datasetId": dataset_id, "column": {"name": "city"}}],
-        # Preselect the home city so the "Current ..." big numbers never mix in
+        # Preselect the home city so the "... actual" big numbers never mix in
         # older rows of other cities (e.g. the New York history)
         "defaultDataMask": {
             "extraFormData": {"filters": [{"col": "city", "op": "IN", "val": [DEFAULT_CITY]}]},
@@ -355,6 +432,77 @@ def city_filter(dataset_id):
         "cascadeParentIds": [],
         "scope": {"rootPath": ["ROOT_ID"], "excluded": []},
     }
+
+
+def label_columns(session, dataset_id):
+    """Set Spanish verbose names, keeping labels someone already set in the UI."""
+    response = session.get(f"{BASE}/dataset/{dataset_id}", timeout=TIMEOUT)
+    response.raise_for_status()
+    columns, changed = [], False
+    for column in response.json()["result"]["columns"]:
+        label = COLUMN_LABELS.get(column["column_name"])
+        if (
+            label
+            and (RESET or not column.get("verbose_name"))
+            and column.get("verbose_name") != label
+        ):
+            column["verbose_name"] = label
+            changed = True
+        columns.append({k: column[k] for k in COLUMN_FIELDS if k in column})
+    if not changed:
+        return
+    response = session.put(
+        f"{BASE}/dataset/{dataset_id}", json={"columns": columns}, timeout=TIMEOUT
+    )
+    # Labels are cosmetic: a rejected update must not stop the charts and dashboard
+    if not response.ok:
+        print(
+            f"Could not label columns of dataset {dataset_id}: "
+            f"{response.status_code} {response.text[:300]}"
+        )
+
+
+def sync_chart(session, name, payload):
+    """Create the chart, or rename/overwrite an existing one. Returns (id, created)."""
+    chart_id = find(session, "chart", "slice_name", name)
+    old = next((en for en, es in RENAMED_CHARTS.items() if es == name), None)
+    if not chart_id and old and (chart_id := find(session, "chart", "slice_name", old)):
+        print(f"Renaming chart '{old}' -> '{name}' (id={chart_id})")
+        update = payload if RESET else {"slice_name": name}
+    elif chart_id:
+        update = payload if RESET else None
+    else:
+        response = session.post(f"{BASE}/chart/", json=payload, timeout=TIMEOUT)
+        response.raise_for_status()
+        print(f"Created chart '{name}' (id={response.json()['id']})")
+        return response.json()["id"], True
+    if update:
+        session.put(f"{BASE}/chart/{chart_id}", json=update, timeout=TIMEOUT).raise_for_status()
+    return chart_id, False
+
+
+def sync_dashboard(session):
+    """Find the dashboard by slug (title may be edited in the UI). Returns (id, created)."""
+    dashboard_id = find(session, "dashboard", "slug", DASHBOARD_SLUG)
+    if not dashboard_id:
+        response = session.post(
+            f"{BASE}/dashboard/",
+            json={"dashboard_title": DASHBOARD_TITLE, "slug": DASHBOARD_SLUG, "published": True},
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+        print(f"Created dashboard '{DASHBOARD_TITLE}'")
+        return response.json()["id"], True
+    response = session.get(f"{BASE}/dashboard/{dashboard_id}", timeout=TIMEOUT)
+    response.raise_for_status()
+    if RESET or response.json()["result"]["dashboard_title"] in LEGACY_DASHBOARD_TITLES:
+        session.put(
+            f"{BASE}/dashboard/{dashboard_id}",
+            json={"dashboard_title": DASHBOARD_TITLE, "published": True},
+            timeout=TIMEOUT,
+        ).raise_for_status()
+        print(f"Dashboard title set to '{DASHBOARD_TITLE}'")
+    return dashboard_id, False
 
 
 def main():
@@ -384,9 +532,10 @@ def main():
             )
         # Pick up column changes from the dbt models
         session.put(f"{BASE}/dataset/{dataset_id}/refresh", timeout=TIMEOUT).raise_for_status()
+        label_columns(session, dataset_id)
         datasets[table] = dataset_id
 
-    chart_ids = []
+    chart_ids, new_charts = [], []
     for name, dataset_id, params in chart_definitions(datasets):
         payload = {
             "slice_name": name,
@@ -395,30 +544,31 @@ def main():
             "datasource_type": "table",
             "params": json.dumps({**params, "datasource": f"{dataset_id}__table"}),
         }
-        chart_ids.append((name, upsert(session, "chart", "slice_name", name, payload)))
+        chart_id, created = sync_chart(session, name, payload)
+        chart_ids.append((name, chart_id))
+        if created:
+            new_charts.append(chart_id)
 
-    dashboard_id = upsert(
-        session,
-        "dashboard",
-        "dashboard_title",
-        DASHBOARD_TITLE,
-        {"dashboard_title": DASHBOARD_TITLE, "slug": "weather", "published": True},
-        update={"published": True},
-    )
-    session.put(
-        f"{BASE}/dashboard/{dashboard_id}",
-        json={
-            "position_json": json.dumps(dashboard_layout(chart_ids)),
-            "json_metadata": json.dumps(
-                {
-                    "refresh_frequency": REFRESH_SECONDS,
-                    "native_filter_configuration": [city_filter(datasets["weather_report"])],
-                }
-            ),
-        },
-        timeout=TIMEOUT,
-    ).raise_for_status()
-    for _, chart_id in chart_ids:
+    dashboard_id, dashboard_created = sync_dashboard(session)
+    if dashboard_created or RESET:
+        session.put(
+            f"{BASE}/dashboard/{dashboard_id}",
+            json={
+                "position_json": json.dumps(dashboard_layout(chart_ids)),
+                "json_metadata": json.dumps(
+                    {
+                        "refresh_frequency": REFRESH_SECONDS,
+                        "native_filter_configuration": [city_filter(datasets["weather_report"])],
+                    }
+                ),
+            },
+            timeout=TIMEOUT,
+        ).raise_for_status()
+        print("Dashboard layout written")
+        new_charts = [chart_id for _, chart_id in chart_ids]
+    elif new_charts:
+        print("New charts are not placed on the existing layout: drag them in from the UI")
+    for chart_id in new_charts:
         session.put(
             f"{BASE}/chart/{chart_id}", json={"dashboards": [dashboard_id]}, timeout=TIMEOUT
         ).raise_for_status()
