@@ -5,7 +5,10 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-API_URL = "https://api.weatherstack.com/current"
+# HTTPS by default. Weatherstack's free plan may reject HTTPS (error 105,
+# https_access_restricted); set WEATHERSTACK_API_URL to the http:// URL only if
+# you accept the API key travelling unencrypted
+DEFAULT_API_URL = "https://api.weatherstack.com/current"
 REQUEST_TIMEOUT = (5, 30)  # (connect, read) seconds
 
 logger = logging.getLogger(__name__)
@@ -19,7 +22,7 @@ def fetch_data():
         raise RuntimeError("WEATHERSTACK_API_KEY environment variable is not set")
     try:
         response = requests.get(
-            API_URL,
+            os.getenv("WEATHERSTACK_API_URL") or DEFAULT_API_URL,
             params={"access_key": api_key, "query": city},
             timeout=REQUEST_TIMEOUT,
         )
@@ -30,7 +33,11 @@ def fetch_data():
     data = response.json()
     # Weatherstack reports errors (bad key, quota exceeded) with HTTP 200
     if data.get("success") is False:
-        raise RuntimeError(f"Weatherstack API error: {data.get('error')}")
+        error = data.get("error")
+        hint = ""
+        if isinstance(error, dict) and error.get("code") == 105:
+            hint = " (plan does not allow HTTPS: upgrade, or set WEATHERSTACK_API_URL to http://)"
+        raise RuntimeError(f"Weatherstack API error: {error}{hint}")
     logger.info("API response received successfully.")
     return data
 

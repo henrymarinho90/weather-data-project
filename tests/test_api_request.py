@@ -57,6 +57,40 @@ def test_fetch_data_raises_on_success_false(monkeypatch):
         api_request.fetch_data()
 
 
+def _capture_url(monkeypatch):
+    monkeypatch.setenv("WEATHERSTACK_API_KEY", "k")
+    calls = {}
+
+    def fake_get(url, **kwargs):
+        calls["url"] = url
+        return FakeResponse({"current": {}})
+
+    monkeypatch.setattr(api_request.requests, "get", fake_get)
+    return calls
+
+
+def test_fetch_data_uses_https_by_default(monkeypatch):
+    monkeypatch.delenv("WEATHERSTACK_API_URL", raising=False)
+    calls = _capture_url(monkeypatch)
+    api_request.fetch_data()
+    assert calls["url"] == "https://api.weatherstack.com/current"
+
+
+def test_fetch_data_url_override(monkeypatch):
+    monkeypatch.setenv("WEATHERSTACK_API_URL", "http://api.weatherstack.com/current")
+    calls = _capture_url(monkeypatch)
+    api_request.fetch_data()
+    assert calls["url"] == "http://api.weatherstack.com/current"
+
+
+def test_fetch_data_explains_https_restricted(monkeypatch):
+    monkeypatch.setenv("WEATHERSTACK_API_KEY", "k")
+    payload = {"success": False, "error": {"code": 105, "type": "https_access_restricted"}}
+    monkeypatch.setattr(api_request.requests, "get", lambda *a, **kw: FakeResponse(payload))
+    with pytest.raises(RuntimeError, match="WEATHERSTACK_API_URL"):
+        api_request.fetch_data()
+
+
 def test_fetch_data_propagates_http_error(monkeypatch):
     monkeypatch.setenv("WEATHERSTACK_API_KEY", "k")
     monkeypatch.setattr(api_request.requests, "get", lambda *a, **kw: FakeResponse({}, 500))

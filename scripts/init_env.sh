@@ -30,7 +30,7 @@ else
 fi
 
 python3 - "$MODE" <<'PY'
-import os, re, secrets, sys
+import base64, os, re, secrets, sys
 
 mode = sys.argv[1]
 KEY = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)")
@@ -48,6 +48,9 @@ def parse(path):
 def resolve(key, value):
     if value == "change_me":
         return secrets.token_urlsafe(32), True
+    if value == "change_me_fernet":
+        # Fernet needs 32 random bytes, urlsafe base64 WITH padding (44 chars)
+        return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode(), True
     if value == "auto":
         return os.environ[f"AUTO_{key}"], False
     return value, False

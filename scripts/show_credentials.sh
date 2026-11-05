@@ -25,7 +25,7 @@ SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
 
 # Airflow standalone generates the admin password on first start
 AIRFLOW_PASSWORD=$(docker compose exec -T af \
-  cat /opt/airflow/simple_auth_manager_passwords.json.generated 2>/dev/null \
+  sh -c 'cat "${AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE:-/opt/airflow/simple_auth_manager_passwords.json.generated}"' 2>/dev/null \
   | python3 -c 'import sys,json; print(json.load(sys.stdin).get("admin",""))' 2>/dev/null || true)
 AIRFLOW_PASSWORD=${AIRFLOW_PASSWORD:-"<not available - is the af service running?>"}
 

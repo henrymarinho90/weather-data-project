@@ -130,6 +130,10 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@db:5432/airflow_db
       AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?run make init}
+      # Fixed key: otherwise airflow.cfg gets a random one per new volume
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?run make init}
+      # On the airflow_logs volume: the generated admin password stays the same across redeploys
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/logs/.auth/passwords.json
       # 'mcp' is the account the airflow_mcp service logs in with (read-only by default)
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "admin:admin,mcp:${AIRFLOW_MCP_ROLE:-viewer}"
       AIRFLOW_MCP_PASSWORD: ${AIRFLOW_MCP_PASSWORD:?run make init}
@@ -139,6 +143,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
       WEATHERSTACK_API_KEY: ${WEATHERSTACK_API_KEY:-}
+      WEATHERSTACK_API_URL: ${WEATHERSTACK_API_URL:-}
       WEATHER_CITY: ${WEATHER_CITY:-New York}
       USE_MOCK_API: ${USE_MOCK_API:-true}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
@@ -149,6 +154,11 @@ services:
       HOST_UID: ${HOST_UID:-1000}
       HOST_GID: ${HOST_GID:-1000}
     volumes:
+      # Survives re-creation/redeploys: task logs, plus the users' passwords in
+      # logs/.auth (a new volume on a path the image lacks would be root-owned and
+      # unwritable). Not a volume on all of /opt/airflow: Docker Desktop then reports
+      # a placeholder Source for the dags bind mount and start.sh detects a wrong dbt path
+      - airflow_logs:/opt/airflow/logs
       - ./airflow/dags:/opt/airflow/dags:ro
       - ./api-request:/opt/airflow/api-request:ro
       - ./airflow/seed_mcp_user.py:/opt/airflow/seed_mcp_user.py:ro
@@ -411,5 +421,6 @@ networks:
 
 volumes:
   pg_data:
+  airflow_logs:
   redis:
   superset_home:

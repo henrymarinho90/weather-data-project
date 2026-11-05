@@ -16,6 +16,15 @@ dags = next(m["Source"] for m in mounts if m["Destination"] == "/opt/airflow/dag
 print(os.path.join(os.path.dirname(os.path.dirname(dags)), "dbt"))
 PY
 )
+    case "$DBT_HOST_PATH" in
+        /run/desktop/*)
+            # Docker Desktop (WSL) sometimes reports placeholder mount sources that
+            # the DockerOperator cannot bind; the dbt tasks would fail with
+            # "mkdir /usr/app/weather: read-only file system"
+            echo "start.sh: WARNING: detected a Docker Desktop placeholder path." >&2
+            echo "start.sh: set DBT_HOST_PATH in .env to the absolute path of ./dbt" >&2
+            ;;
+    esac
 fi
 export DBT_HOST_PATH
 # Also for processes not started from here (docker exec ... airflow dags test)
