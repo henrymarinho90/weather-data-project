@@ -50,6 +50,11 @@ COLOR_SCHEME = "atletico_bucaramanga"  # EXTRA_CATEGORICAL_COLOR_SCHEMES in supe
 LOGO_URL = os.getenv("DASHBOARD_LOGO_URL", "")
 BANNER_ROW, BANNER_ID = "ROW-ab-banner", "MARKDOWN-ab-banner"
 BANNER_HEIGHT = 18
+# Give the dashboard the Public role (DASHBOARD_RBAC): anyone with the link can view it,
+# and the blog can embed it. Set PUBLIC_DASHBOARD=false to keep it private (a role
+# added earlier is not removed: drop it in the dashboard's properties).
+PUBLIC_DASHBOARD = os.getenv("PUBLIC_DASHBOARD", "true").lower() == "true"
+PUBLIC_ROLE = "Public"
 # Preselected in the dashboard city filter
 DEFAULT_CITY = os.environ.get("DASHBOARD_DEFAULT_CITY", "Bucaramanga")
 REFRESH_SECONDS = 300
@@ -580,6 +585,33 @@ def add_banner(position, logo_url):
     return position
 
 
+def make_public(session, dashboard_id):
+    """Add the Public role to the dashboard's roles, keeping any others."""
+    response = session.get(f"{BASE}/dashboard/{dashboard_id}", timeout=TIMEOUT)
+    response.raise_for_status()
+    roles = response.json()["result"].get("roles") or []
+    if any(role.get("name") == PUBLIC_ROLE for role in roles):
+        return
+    related = session.get(
+        f"{BASE}/dashboard/related/roles",
+        params={"q": json.dumps({"filter": PUBLIC_ROLE})},
+        timeout=TIMEOUT,
+    )
+    related.raise_for_status()
+    public_id = next(
+        (r["value"] for r in related.json()["result"] if r.get("text") == PUBLIC_ROLE), None
+    )
+    if public_id is None:
+        print(f"Role '{PUBLIC_ROLE}' not found: dashboard stays private")
+        return
+    session.put(
+        f"{BASE}/dashboard/{dashboard_id}",
+        json={"roles": [role["id"] for role in roles] + [public_id]},
+        timeout=TIMEOUT,
+    ).raise_for_status()
+    print("Dashboard is public (role Public)")
+
+
 def apply_branding(session, dashboard_id, theme_id, force):
     """Attach theme, CSS, palette and banner unless the dashboard already has a theme."""
     response = session.get(f"{BASE}/dashboard/{dashboard_id}", timeout=TIMEOUT)
@@ -670,6 +702,8 @@ def main():
             f"{BASE}/chart/{chart_id}", json={"dashboards": [dashboard_id]}, timeout=TIMEOUT
         ).raise_for_status()
     apply_branding(session, dashboard_id, sync_theme(session), force=dashboard_created or RESET)
+    if PUBLIC_DASHBOARD:
+        make_public(session, dashboard_id)
 
     # Charts from older versions of this script that are no longer defined
     current = {name for name, _ in chart_ids}

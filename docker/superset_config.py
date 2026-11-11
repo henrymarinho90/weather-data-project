@@ -105,7 +105,24 @@ class CeleryConfig:
 
 CELERY_CONFIG = CeleryConfig
 
-FEATURE_FLAGS = {"ALERT_REPORTS": True, "DATASET_FOLDERS": True}
+# DASHBOARD_RBAC: a dashboard's "roles" decide who sees it and its charts' data. The
+# weather dashboard gets the Public role (superset_setup.py), so anonymous visitors can
+# view that dashboard only: other dashboards and datasets stay private.
+FEATURE_FLAGS = {"ALERT_REPORTS": True, "DATASET_FOLDERS": True, "DASHBOARD_RBAC": True}
+
+# Anonymous visitors get Superset's built-in minimal read-only "Public" permissions
+# (view dashboards/charts they are given, no SQL Lab, no explore, no edits)
+PUBLIC_ROLE_LIKE = "Public"
+
+# Sites allowed to show dashboards in an <iframe> (CSP frame-ancestors), comma-separated
+DASHBOARD_EMBED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "DASHBOARD_EMBED_ORIGINS",
+        "https://portfolio.romahomestore.com,https://romahomestore.com,https://www.romahomestore.com",
+    ).split(",")
+    if o.strip()
+]
 ALERT_REPORTS_NOTIFICATION_DRY_RUN = True
 WEBDRIVER_BASEURL = f"http://superset_app{os.environ.get('SUPERSET_APP_ROOT', '/')}/"  # When using docker compose baseurl should be http://superset_nginx{ENV{BASEPATH}}/  # noqa: E501
 # The base URL for the email report hyperlinks.
@@ -178,8 +195,11 @@ TALISMAN_CONFIG = {
         "style-src": ["'self'", "'unsafe-inline'", *_FONT_HOSTS],
         "font-src": ["'self'", *_FONT_HOSTS],
         "script-src": ["'self'", "'strict-dynamic'"],
+        "frame-ancestors": ["'self'", *DASHBOARD_EMBED_ORIGINS],
     },
     "content_security_policy_nonce_in": ["script-src"],
+    # X-Frame-Options can't list several sites; CSP frame-ancestors above replaces it
+    "frame_options": None,
     "force_https": False,
     "session_cookie_secure": False,
 }
