@@ -187,3 +187,28 @@ def test_banner_is_first_row_and_idempotent():
     twice = setup.add_banner(json.loads(json.dumps(once)), "https://cms.example/assets/b")
     assert twice["GRID_ID"]["children"].count(setup.BANNER_ROW) == 1
     assert "assets/b" in twice[setup.BANNER_ID]["meta"]["code"]
+
+
+class RoleSession(FakeSession):
+    """Dashboard with `roles`; Public role id 5 in the related-roles endpoint."""
+
+    def __init__(self, roles):
+        super().__init__({})
+        self.roles = roles
+
+    def get(self, url, params=None, timeout=None):
+        if url.endswith("/related/roles"):
+            return FakeResponse({"result": [{"value": 5, "text": "Public"}]})
+        return FakeResponse({"result": {"roles": self.roles}})
+
+
+def test_make_public_adds_public_role_keeping_others():
+    session = RoleSession([{"id": 3, "name": "Gamma"}])
+    setup.make_public(session, 1)
+    assert session.calls == [("PUT", f"{setup.BASE}/dashboard/1", {"roles": [3, 5]})]
+
+
+def test_make_public_is_idempotent():
+    session = RoleSession([{"id": 5, "name": "Public"}])
+    setup.make_public(session, 1)
+    assert session.calls == []

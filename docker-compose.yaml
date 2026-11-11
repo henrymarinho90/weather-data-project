@@ -38,6 +38,9 @@ x-superset: &superset
     SUPERSET_PORT: 8088
     # Image hosts allowed by the CSP (the crest on Directus), see superset_config.py
     DASHBOARD_IMAGE_DOMAINS: ${DASHBOARD_IMAGE_DOMAINS:-cms.romahomestore.com}
+    # Sites that may embed dashboards in an iframe; PUBLIC_DASHBOARD opens the weather one
+    DASHBOARD_EMBED_ORIGINS: ${DASHBOARD_EMBED_ORIGINS:-https://portfolio.romahomestore.com,https://romahomestore.com,https://www.romahomestore.com}
+    PUBLIC_DASHBOARD: ${PUBLIC_DASHBOARD:-true}
   volumes: &superset-volumes
     - ./docker/superset_config.py:/app/pythonpath/superset_config.py:ro
     - ./docker/superset_config_docker.py:/app/pythonpath/superset_config_docker.py:ro
