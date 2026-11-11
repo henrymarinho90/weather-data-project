@@ -268,7 +268,8 @@ services:
     environment:
       <<: *superset-env
       SUPERSET_URL: http://superset:8088
-      DASHBOARD_LOGO_URL: ${DASHBOARD_LOGO_URL:-}
+      # Crest (transparent PNG) in Directus, resized to 144 px for the 72 px banner
+      DASHBOARD_LOGO_URL: ${DASHBOARD_LOGO_URL:-https://cms.romahomestore.com/assets/ddb2d378-9ebc-4a8b-9547-f56c0a3cf1fc?height=144&format=png}
     depends_on:
       superset:
         condition: service_healthy
