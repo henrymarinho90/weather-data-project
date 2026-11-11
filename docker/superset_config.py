@@ -114,6 +114,76 @@ WEBDRIVER_BASEURL_USER_FRIENDLY = (
 )
 SQLLAB_CTAS_NO_LIMIT = True
 
+# Chart palette for the "Atlético Bucaramanga" theme (docker/themes/). The crest yellow
+# (#FFED00) is darkened to gold: pure yellow lines are unreadable on a light background.
+EXTRA_CATEGORICAL_COLOR_SCHEMES = [
+    {
+        "id": "atletico_bucaramanga",
+        "label": "Atlético Bucaramanga",
+        "description": "Verde, oro y tinta del escudo",
+        "isDefault": False,
+        "colors": [
+            "#00522C",  # verde oscuro (camiseta alterna)
+            "#C9A800",  # oro (amarillo del escudo, legible)
+            "#89BA3E",  # verde del escudo
+            "#1A1A2C",  # tinta
+            "#8D8A09",  # oliva
+            "#504F4D",  # gris
+            "#2E7D4F",  # verde medio
+            "#B5B13A",  # oliva claro
+        ],
+    }
+]
+
+# Markdown elements may use CSS classes (the crest banner styled by the dashboard CSS)
+HTML_SANITIZATION_SCHEMA_EXTENSIONS = {"attributes": {"*": ["className"]}}
+
+# Content Security Policy: Superset's default plus the hosts dashboards may load
+# images from (the crest is served by Directus). Comma-separated, https only.
+DASHBOARD_IMAGE_DOMAINS = [
+    d.strip()
+    for d in os.getenv("DASHBOARD_IMAGE_DOMAINS", "cms.romahomestore.com").split(",")
+    if d.strip()
+]
+_FONT_HOSTS = [
+    "https://fonts.googleapis.com",
+    "https://fonts.gstatic.com",
+    "https://use.typekit.net",
+    "https://use.typekit.com",
+]
+TALISMAN_CONFIG = {
+    "content_security_policy": {
+        "base-uri": ["'self'"],
+        "default-src": ["'self'"],
+        "img-src": [
+            "'self'",
+            "blob:",
+            "data:",
+            "https://apachesuperset.gateway.scarf.sh",
+            "https://static.scarf.sh/",
+            "ows.terrestris.de",
+            "https://cdn.document360.io",
+            *[f"https://{d}" for d in DASHBOARD_IMAGE_DOMAINS],
+        ],
+        "worker-src": ["'self'", "blob:"],
+        "connect-src": [
+            "'self'",
+            "https://api.mapbox.com",
+            "https://events.mapbox.com",
+            "https://tile.openstreetmap.org",
+            "https://tile.osm.ch",
+            "https://a.basemaps.cartocdn.com",
+        ],
+        "object-src": "'none'",
+        "style-src": ["'self'", "'unsafe-inline'", *_FONT_HOSTS],
+        "font-src": ["'self'", *_FONT_HOSTS],
+        "script-src": ["'self'", "'strict-dynamic'"],
+    },
+    "content_security_policy_nonce_in": ["script-src"],
+    "force_https": False,
+    "session_cookie_secure": False,
+}
+
 log_level_text = os.getenv("SUPERSET_LOG_LEVEL", "INFO")
 LOG_LEVEL = getattr(logging, log_level_text.upper(), logging.INFO)
 

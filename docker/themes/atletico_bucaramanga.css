@@ -1,0 +1,73 @@
+/* Atlético Bucaramanga: yellow band header, green accents, sports typography.
+   Fonts load through the theme's fontUrls (Bebas Neue, Oswald, Montserrat). */
+
+/* Header: home-shirt yellow band with the away-shirt green trim */
+.dashboard-header-container {
+  background: #FFED00;
+  border-bottom: 4px solid #00522C;
+}
+.dashboard-header-container [data-test="editable-title"],
+.dashboard-header-container [data-test="editable-title"] input {
+  font-family: "Bebas Neue", Oswald, sans-serif;
+  font-size: 34px;
+  letter-spacing: 1px;
+  color: #1A1A2C;
+}
+
+/* Chart titles */
+.header-title,
+[data-test="slice-header"] .header-title,
+.dashboard-component-chart-holder .header-title {
+  font-family: Oswald, "Bebas Neue", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: #00522C;
+}
+
+/* Cards: thin yellow top edge like the shirt collar */
+.dashboard-component-chart-holder {
+  border-top: 3px solid #FFED00;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(26, 26, 44, 0.08);
+}
+
+/* Big numbers ("... actual") */
+.big_number .header-line,
+.header-line {
+  font-family: "Bebas Neue", Oswald, sans-serif;
+  color: #00522C;
+}
+.subheader-line {
+  font-family: Montserrat, sans-serif;
+  color: #504F4D;
+}
+
+/* Brand banner (markdown row with the crest) */
+.dashboard-markdown .ab-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 100%;
+  padding: 8px 16px;
+  background: linear-gradient(90deg, #00522C 0%, #00522C 70%, #89BA3E 100%);
+  border-radius: 8px;
+  color: #FFED00;
+}
+.dashboard-markdown .ab-banner img {
+  height: 72px;
+  width: auto;
+}
+.dashboard-markdown .ab-banner h1 {
+  margin: 0;
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 40px;
+  letter-spacing: 1.5px;
+  color: #FFED00;
+}
+.dashboard-markdown .ab-banner p {
+  margin: 0;
+  font-family: Oswald, sans-serif;
+  font-weight: 500;
+  color: #FFFFFD;
+}

@@ -14,10 +14,13 @@ Run inside the Superset container:
 import json
 import os
 import sys
+from pathlib import Path
 
 import requests
 
-BASE = "http://localhost:8088/api/v1"
+# Inside the superset container: localhost; the superset_setup service: http://superset:8088
+SUPERSET_URL = os.getenv("SUPERSET_URL", "http://localhost:8088").rstrip("/")
+BASE = f"{SUPERSET_URL}/api/v1"
 TIMEOUT = 30
 ADMIN_USER = os.getenv("SUPERSET_ADMIN_USER", "admin")
 # docker-init.sh creates the admin with $ADMIN_PASSWORD (SUPERSET_ADMIN_PASSWORD in .env)
@@ -34,6 +37,19 @@ DASHBOARD_SLUG = "weather"
 # Older titles of the same dashboard, renamed to DASHBOARD_TITLE
 LEGACY_DASHBOARD_TITLES = {"Weather Dashboard"}
 RESET = os.getenv("SUPERSET_SETUP_RESET", "false").lower() == "true"
+
+# Branding (docker/themes/): the theme is owned by the repo and updated on every run;
+# it is attached to the dashboard (with CSS, palette and crest banner) only while the
+# dashboard has no theme yet, or with SUPERSET_SETUP_RESET=true.
+THEME_DIR = Path(__file__).resolve().parent / "themes"
+THEME_NAME = "Atlético Bucaramanga"
+THEME_FILE = THEME_DIR / "atletico_bucaramanga.json"
+CSS_FILE = THEME_DIR / "atletico_bucaramanga.css"
+COLOR_SCHEME = "atletico_bucaramanga"  # EXTRA_CATEGORICAL_COLOR_SCHEMES in superset_config.py
+# Crest served by Directus (its host must be in DASHBOARD_IMAGE_DOMAINS); empty = no banner
+LOGO_URL = os.getenv("DASHBOARD_LOGO_URL", "")
+BANNER_ROW, BANNER_ID = "ROW-ab-banner", "MARKDOWN-ab-banner"
+BANNER_HEIGHT = 18
 # Preselected in the dashboard city filter
 DEFAULT_CITY = os.environ.get("DASHBOARD_DEFAULT_CITY", "Bucaramanga")
 REFRESH_SECONDS = 300
@@ -505,6 +521,87 @@ def sync_dashboard(session):
     return dashboard_id, False
 
 
+def sync_theme(session):
+    """Create or update the repo theme by name. Returns its id."""
+    payload = {"theme_name": THEME_NAME, "json_data": THEME_FILE.read_text()}
+    # The theme API filters names with a custom text filter: match exactly here instead
+    response = session.get(
+        f"{BASE}/theme/",
+        params={"q": json.dumps({"columns": ["id", "theme_name"], "page_size": 100})},
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    theme_id = next(
+        (t["id"] for t in response.json()["result"] if t["theme_name"] == THEME_NAME), None
+    )
+    if theme_id:
+        session.put(f"{BASE}/theme/{theme_id}", json=payload, timeout=TIMEOUT).raise_for_status()
+        print(f"Updated theme '{THEME_NAME}' (id={theme_id})")
+        return theme_id
+    response = session.post(f"{BASE}/theme/", json=payload, timeout=TIMEOUT)
+    response.raise_for_status()
+    print(f"Created theme '{THEME_NAME}' (id={response.json()['id']})")
+    return response.json()["id"]
+
+
+def banner_markdown(logo_url):
+    return (
+        '<div class="ab-banner">'
+        f'<img src="{logo_url}" alt="Escudo del Atlético Bucaramanga" height="72">'
+        "<div><h1>Clima en Bucaramanga</h1>"
+        "<p>La Ciudad Bonita, observada a las 7 a. m. y 7 p. m.</p></div>"
+        "</div>"
+    )
+
+
+def add_banner(position, logo_url):
+    """Put (or refresh) a full-width crest banner as the first row of the layout."""
+    if BANNER_ID in position:
+        position[BANNER_ID]["meta"]["code"] = banner_markdown(logo_url)
+        return position
+    grid = position.setdefault(
+        "GRID_ID", {"type": "GRID", "id": "GRID_ID", "children": [], "parents": ["ROOT_ID"]}
+    )
+    grid["children"].insert(0, BANNER_ROW)
+    position[BANNER_ROW] = {
+        "type": "ROW",
+        "id": BANNER_ROW,
+        "children": [BANNER_ID],
+        "parents": ["ROOT_ID", "GRID_ID"],
+        "meta": {"background": "BACKGROUND_TRANSPARENT"},
+    }
+    position[BANNER_ID] = {
+        "type": "MARKDOWN",
+        "id": BANNER_ID,
+        "children": [],
+        "parents": ["ROOT_ID", "GRID_ID", BANNER_ROW],
+        "meta": {"width": 12, "height": BANNER_HEIGHT, "code": banner_markdown(logo_url)},
+    }
+    return position
+
+
+def apply_branding(session, dashboard_id, theme_id, force):
+    """Attach theme, CSS, palette and banner unless the dashboard already has a theme."""
+    response = session.get(f"{BASE}/dashboard/{dashboard_id}", timeout=TIMEOUT)
+    response.raise_for_status()
+    dashboard = response.json()["result"]
+    if dashboard.get("theme") and not force:
+        print("Dashboard already has a theme: branding left as edited in the UI")
+        return
+    metadata = json.loads(dashboard.get("json_metadata") or "{}")
+    metadata["color_scheme"] = COLOR_SCHEME
+    position = json.loads(dashboard.get("position_json") or "{}")
+    update = {
+        "theme_id": theme_id,
+        "css": CSS_FILE.read_text(),
+        "json_metadata": json.dumps(metadata),
+    }
+    if LOGO_URL and position:
+        update["position_json"] = json.dumps(add_banner(position, LOGO_URL))
+    session.put(f"{BASE}/dashboard/{dashboard_id}", json=update, timeout=TIMEOUT).raise_for_status()
+    print(f"Branding '{THEME_NAME}' applied to the dashboard")
+
+
 def main():
     if not DB_URI:
         sys.exit("WEATHER_DB_URI is not set (docker-compose sets it from .env)")
@@ -572,6 +669,7 @@ def main():
         session.put(
             f"{BASE}/chart/{chart_id}", json={"dashboards": [dashboard_id]}, timeout=TIMEOUT
         ).raise_for_status()
+    apply_branding(session, dashboard_id, sync_theme(session), force=dashboard_created or RESET)
 
     # Charts from older versions of this script that are no longer defined
     current = {name for name, _ in chart_ids}
