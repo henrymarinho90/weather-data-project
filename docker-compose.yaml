@@ -36,10 +36,13 @@ x-superset: &superset
     SUPERSET_LOAD_EXAMPLES: "no"
     CYPRESS_CONFIG: "false"
     SUPERSET_PORT: 8088
+    # Image hosts allowed by the CSP (the crest on Directus), see superset_config.py
+    DASHBOARD_IMAGE_DOMAINS: ${DASHBOARD_IMAGE_DOMAINS:-cms.romahomestore.com}
   volumes: &superset-volumes
     - ./docker/superset_config.py:/app/pythonpath/superset_config.py:ro
     - ./docker/superset_config_docker.py:/app/pythonpath/superset_config_docker.py:ro
     - ./docker/superset_setup.py:/app/docker/superset_setup.py:ro
+    - ./docker/themes:/app/docker/themes:ro
     - superset_home:/app/superset_home
   networks:
     - my_network
@@ -250,6 +253,27 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
+
+  # One-shot after every deploy: datasets, charts, dashboard and the Atlético Bucaramanga
+  # theme. Keeps edits made in the UI (see docker/superset_setup.py); a failure here
+  # leaves Superset running and shows in this container's log.
+  superset_setup:
+    <<: *superset
+    container_name: superset_setup
+    restart: "no"
+    deploy:
+      resources:
+        limits: {memory: 256m, cpus: "0.5"}
+    command: ["python", "/app/docker/superset_setup.py"]
+    environment:
+      <<: *superset-env
+      SUPERSET_URL: http://superset:8088
+      DASHBOARD_LOGO_URL: ${DASHBOARD_LOGO_URL:-}
+    depends_on:
+      superset:
+        condition: service_healthy
+    healthcheck:
+      disable: true
 
   # ---- MCP servers for AI clients. Not published directly: mcp_gateway exposes them.
 

@@ -168,3 +168,22 @@ def test_sync_chart_creates_missing(monkeypatch):
     session = FakeSession({})
     assert setup.sync_chart(session, "Sol y luna", PAYLOAD) == (99, True)
     assert session.calls[0][0] == "POST"
+
+
+def test_theme_file_is_valid_and_fonts_allowed():
+    theme = json.loads(setup.THEME_FILE.read_text())
+    tokens = theme["token"]
+    assert tokens["colorPrimary"].startswith("#")
+    for url in tokens["fontUrls"]:
+        assert url.startswith("https://fonts.googleapis.com/")
+    assert setup.CSS_FILE.read_text().strip()
+
+
+def test_banner_is_first_row_and_idempotent():
+    layout = setup.dashboard_layout([("Temperatura actual", 1)], rows=[[("Temperatura actual", 4)]])
+    once = setup.add_banner(json.loads(json.dumps(layout)), "https://cms.example/assets/a")
+    assert once["GRID_ID"]["children"][0] == setup.BANNER_ROW
+    assert "https://cms.example/assets/a" in once[setup.BANNER_ID]["meta"]["code"]
+    twice = setup.add_banner(json.loads(json.dumps(once)), "https://cms.example/assets/b")
+    assert twice["GRID_ID"]["children"].count(setup.BANNER_ROW) == 1
+    assert "assets/b" in twice[setup.BANNER_ID]["meta"]["code"]
